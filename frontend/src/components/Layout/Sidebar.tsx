@@ -83,9 +83,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 primary={item.label}
                 slotProps={{
                   primary: {
-                    fontSize: 14,
-                    fontWeight: active ? 600 : 400,
-                    color: 'white',
+                    sx: {
+                      fontSize: 14,
+                      fontWeight: active ? 600 : 400,
+                      color: 'white',
+                    },
                   },
                 }}
               />
