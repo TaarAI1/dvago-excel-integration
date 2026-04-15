@@ -81,10 +81,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               </ListItemIcon>
               <ListItemText
                 primary={item.label}
-                primaryTypographyProps={{
-                  fontSize: 14,
-                  fontWeight: active ? 600 : 400,
-                  color: 'white',
+                slotProps={{
+                  primary: {
+                    fontSize: 14,
+                    fontWeight: active ? 600 : 400,
+                    color: 'white',
+                  },
                 }}
               />
             </ListItemButton>

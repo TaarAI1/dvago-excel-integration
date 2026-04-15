@@ -78,7 +78,7 @@ export default function UsersPage() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h5" fontWeight={700}>User Management</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>User Management</Typography>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setAddOpen(true); setError('') }}>
           Add User
         </Button>

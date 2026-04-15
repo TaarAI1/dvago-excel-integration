@@ -46,14 +46,16 @@ function SettingField({
       rows={isMultiline ? 5 : undefined}
       type={meta.is_sensitive && !show ? 'password' : 'text'}
       size="small"
-      InputProps={meta.is_sensitive ? {
-        endAdornment: (
-          <InputAdornment position="end">
-            <IconButton size="small" onClick={() => setShow(!show)}>
-              {show ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-            </IconButton>
-          </InputAdornment>
-        ),
+      slotProps={meta.is_sensitive ? {
+        input: {
+          endAdornment: (
+            <InputAdornment position="end">
+              <IconButton size="small" onClick={() => setShow(!show)}>
+                {show ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+              </IconButton>
+            </InputAdornment>
+          ),
+        },
       } : undefined}
     />
   )
@@ -63,7 +65,7 @@ function TestButton({
   label, onClick, result,
 }: {
   label: string
-  onClick: () => void
+  onClick: () => Promise<void>
   result: { ok: boolean; error: string | null } | null
 }) {
   const [loading, setLoading] = useState(false)
@@ -96,7 +98,6 @@ function TestButton({
   )
 }
 
-const TABS = ['ftp', 'oracle', 'retailpro', 'scheduler', 'sales_export']
 const TAB_LABELS = ['FTP', 'Oracle DB', 'RetailPro API', 'Scheduler', 'Sales Export']
 
 export default function SettingsPage() {
@@ -114,7 +115,6 @@ export default function SettingsPage() {
     queryFn: () => apiClient.get('/api/settings/raw').then((r) => r.data),
   })
 
-  // Flatten all settings into local state for editing
   useEffect(() => {
     if (!allSettings) return
     const flat: Record<string, string> = {}
@@ -200,9 +200,18 @@ export default function SettingsPage() {
     )
   }
 
+  const field = (key: string, label: string, sensitive = false) => (
+    <SettingField
+      settingKey={key}
+      meta={{ label, value: getVal(key), is_sensitive: sensitive, updated_at: null }}
+      value={getVal(key)}
+      onChange={handleChange}
+    />
+  )
+
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>Configuration</Typography>
+      <Typography variant="h5" sx={{ fontWeight: 700, mb: 3 }}>Configuration</Typography>
 
       {saveMsg && <Alert severity="success" sx={{ mb: 2 }}>{saveMsg}</Alert>}
       {saveError && <Alert severity="error" sx={{ mb: 2 }}>{saveError}</Alert>}
@@ -214,33 +223,20 @@ export default function SettingsPage() {
           sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
           variant="scrollable"
         >
-          {TAB_LABELS.map((label, i) => (
-            <Tab key={i} label={label} />
-          ))}
+          {TAB_LABELS.map((label, i) => <Tab key={i} label={label} />)}
         </Tabs>
 
         <Box sx={{ p: 3 }}>
-          {/* FTP Tab */}
+
+          {/* FTP */}
           <TabPanel value={tab} index={0}>
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={8}>
-                <SettingField settingKey="ftp_host" meta={{ label: 'FTP Host', value: getVal('ftp_host'), is_sensitive: false, updated_at: null }} value={getVal('ftp_host')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <SettingField settingKey="ftp_port" meta={{ label: 'FTP Port', value: getVal('ftp_port'), is_sensitive: false, updated_at: null }} value={getVal('ftp_port')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="ftp_user" meta={{ label: 'FTP Username', value: getVal('ftp_user'), is_sensitive: false, updated_at: null }} value={getVal('ftp_user')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="ftp_password" meta={{ label: 'FTP Password', value: getVal('ftp_password'), is_sensitive: true, updated_at: null }} value={getVal('ftp_password')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="ftp_import_path" meta={{ label: 'Import Path (download CSVs from here)', value: getVal('ftp_import_path'), is_sensitive: false, updated_at: null }} value={getVal('ftp_import_path')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="ftp_export_path" meta={{ label: 'Export Path (upload sales CSVs here)', value: getVal('ftp_export_path'), is_sensitive: false, updated_at: null }} value={getVal('ftp_export_path')} onChange={handleChange} />
-              </Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{field('ftp_host', 'FTP Host')}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{field('ftp_port', 'FTP Port')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('ftp_user', 'FTP Username')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('ftp_password', 'FTP Password', true)}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('ftp_import_path', 'Import Path (download CSVs from here)')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('ftp_export_path', 'Export Path (upload sales CSVs here)')}</Grid>
             </Grid>
             <TestButton label="Test FTP Connection" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 3 }} />
@@ -249,24 +245,14 @@ export default function SettingsPage() {
             </Button>
           </TabPanel>
 
-          {/* Oracle Tab */}
+          {/* Oracle */}
           <TabPanel value={tab} index={1}>
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={8}>
-                <SettingField settingKey="oracle_host" meta={{ label: 'Oracle Host', value: getVal('oracle_host'), is_sensitive: false, updated_at: null }} value={getVal('oracle_host')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <SettingField settingKey="oracle_port" meta={{ label: 'Oracle Port', value: getVal('oracle_port'), is_sensitive: false, updated_at: null }} value={getVal('oracle_port')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12}>
-                <SettingField settingKey="oracle_service_name" meta={{ label: 'Service Name', value: getVal('oracle_service_name'), is_sensitive: false, updated_at: null }} value={getVal('oracle_service_name')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="oracle_username" meta={{ label: 'Oracle Username', value: getVal('oracle_username'), is_sensitive: false, updated_at: null }} value={getVal('oracle_username')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="oracle_password" meta={{ label: 'Oracle Password', value: getVal('oracle_password'), is_sensitive: true, updated_at: null }} value={getVal('oracle_password')} onChange={handleChange} />
-              </Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{field('oracle_host', 'Oracle Host')}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{field('oracle_port', 'Oracle Port')}</Grid>
+              <Grid size={{ xs: 12 }}>{field('oracle_service_name', 'Service Name')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('oracle_username', 'Oracle Username')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('oracle_password', 'Oracle Password', true)}</Grid>
             </Grid>
             <TestButton label="Test Oracle Connection" onClick={testOracle} result={oracleResult} />
             <Divider sx={{ my: 3 }} />
@@ -275,24 +261,14 @@ export default function SettingsPage() {
             </Button>
           </TabPanel>
 
-          {/* RetailPro Tab */}
+          {/* RetailPro */}
           <TabPanel value={tab} index={2}>
             <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <SettingField settingKey="retailpro_base_url" meta={{ label: 'RetailPro Base URL', value: getVal('retailpro_base_url'), is_sensitive: false, updated_at: null }} value={getVal('retailpro_base_url')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={8}>
-                <SettingField settingKey="retailpro_api_key" meta={{ label: 'API Key', value: getVal('retailpro_api_key'), is_sensitive: true, updated_at: null }} value={getVal('retailpro_api_key')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <SettingField settingKey="retailpro_client" meta={{ label: 'Mode (mock / real)', value: getVal('retailpro_client'), is_sensitive: false, updated_at: null }} value={getVal('retailpro_client')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12}>
-                <SettingField settingKey="document_type_endpoints" meta={{ label: 'Document Type → Endpoint Map (JSON)', value: getVal('document_type_endpoints'), is_sensitive: false, updated_at: null }} value={getVal('document_type_endpoints')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12}>
-                <SettingField settingKey="document_type_field_maps" meta={{ label: 'Document Field Maps (JSON)', value: getVal('document_type_field_maps'), is_sensitive: false, updated_at: null }} value={getVal('document_type_field_maps')} onChange={handleChange} />
-              </Grid>
+              <Grid size={{ xs: 12 }}>{field('retailpro_base_url', 'RetailPro Base URL')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{field('retailpro_api_key', 'API Key', true)}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{field('retailpro_client', 'Mode (mock / real)')}</Grid>
+              <Grid size={{ xs: 12 }}>{field('document_type_endpoints', 'Document Type → Endpoint Map (JSON)')}</Grid>
+              <Grid size={{ xs: 12 }}>{field('document_type_field_maps', 'Document Field Maps (JSON)')}</Grid>
             </Grid>
             <TestButton label="Test RetailPro API" onClick={testRetailPro} result={retailproResult} />
             <Divider sx={{ my: 3 }} />
@@ -301,15 +277,11 @@ export default function SettingsPage() {
             </Button>
           </TabPanel>
 
-          {/* Scheduler Tab */}
+          {/* Scheduler */}
           <TabPanel value={tab} index={3}>
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="poll_cron_schedule" meta={{ label: 'FTP Import Cron (e.g. */15 * * * *)', value: getVal('poll_cron_schedule'), is_sensitive: false, updated_at: null }} value={getVal('poll_cron_schedule')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="sales_export_cron" meta={{ label: 'Sales Export Cron (e.g. 0 2 * * *)', value: getVal('sales_export_cron'), is_sensitive: false, updated_at: null }} value={getVal('sales_export_cron')} onChange={handleChange} />
-              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('poll_cron_schedule', 'FTP Import Cron (e.g. */15 * * * *)')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('sales_export_cron', 'Sales Export Cron (e.g. 0 2 * * *)')}</Grid>
             </Grid>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
               Standard cron format: minute hour day month weekday. Changes take effect immediately.
@@ -320,15 +292,11 @@ export default function SettingsPage() {
             </Button>
           </TabPanel>
 
-          {/* Sales Export Tab */}
+          {/* Sales Export */}
           <TabPanel value={tab} index={4}>
             <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <SettingField settingKey="sales_export_sql" meta={{ label: 'Sales SQL Query', value: getVal('sales_export_sql'), is_sensitive: false, updated_at: null }} value={getVal('sales_export_sql')} onChange={handleChange} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <SettingField settingKey="sales_export_filename_prefix" meta={{ label: 'Output Filename Prefix', value: getVal('sales_export_filename_prefix'), is_sensitive: false, updated_at: null }} value={getVal('sales_export_filename_prefix')} onChange={handleChange} />
-              </Grid>
+              <Grid size={{ xs: 12 }}>{field('sales_export_sql', 'Sales SQL Query')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{field('sales_export_filename_prefix', 'Output Filename Prefix')}</Grid>
             </Grid>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
               Output file will be named: <code>{'<prefix>_YYYYMMDD_HHMMSS.csv'}</code>
@@ -338,6 +306,7 @@ export default function SettingsPage() {
               Save Sales Export Settings
             </Button>
           </TabPanel>
+
         </Box>
       </Paper>
     </Box>
