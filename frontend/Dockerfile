@@ -13,10 +13,13 @@ FROM nginx:1.25-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx config as a template (__BACKEND_URL__ replaced at runtime by sed)
+# Copy nginx config as a template (__BACKEND_URL__ replaced at runtime by entrypoint)
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template
+
+# Copy and prepare the entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 80
 
-# Replace __BACKEND_URL__ placeholder with the BACKEND_URL env var, then start nginx
-CMD ["/bin/sh", "-c", "sed \"s|__BACKEND_URL__|$BACKEND_URL|g\" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+ENTRYPOINT ["/entrypoint.sh"]
