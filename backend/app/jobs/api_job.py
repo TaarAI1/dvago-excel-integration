@@ -1,14 +1,15 @@
 import time
+import json
 import logging
 from datetime import datetime
 
 from sqlalchemy import select, update
 
 from app.db.postgres import get_session
+from app.db.settings_store import get_setting
 from app.models.document import Document
 from app.models.activity_log import write_log
 from app.services.retailpro_client import get_client, RetailProError
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,13 @@ async def process_pending_docs():
     APScheduler job: find all unposted, non-errored documents and submit them
     to the RetailPro API sequentially (one at a time).
     """
-    endpoint_map = settings.get_document_type_endpoints()
-    client = get_client()
+    endpoints_raw = await get_setting("document_type_endpoints", "{}")
+    try:
+        endpoint_map = json.loads(endpoints_raw or "{}")
+    except Exception:
+        endpoint_map = {}
+
+    client = await get_client()
 
     async with get_session() as session:
         result = await session.execute(
@@ -29,6 +35,8 @@ async def process_pending_docs():
 
     if not pending_docs:
         logger.debug("No pending documents to process.")
+        if hasattr(client, "close"):
+            await client.close()
         return
 
     logger.info(f"Processing {len(pending_docs)} pending documents.")
@@ -82,7 +90,6 @@ async def process_pending_docs():
                                     duration_ms=duration_ms,
                                     metadata={"endpoint": endpoint, "sid": sid})
             success_count += 1
-            logger.debug(f"Document {doc.id} posted. sid={sid}")
 
         except RetailProError as exc:
             duration_ms = round((time.monotonic() - start) * 1000, 2)
@@ -123,5 +130,8 @@ async def process_pending_docs():
                                     document_type=doc_type, status="failed",
                                     details=str(exc), duration_ms=duration_ms)
             error_count += 1
+
+    if hasattr(client, "close"):
+        await client.close()
 
     logger.info(f"API job done. success={success_count}, errors={error_count}")

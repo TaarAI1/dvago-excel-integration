@@ -1,11 +1,15 @@
 import { useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ThemeProvider, createTheme, CssBaseline, Box, Container, Divider } from '@mui/material'
+import {
+  ThemeProvider, createTheme, CssBaseline, Box, Toolbar,
+} from '@mui/material'
 import Header from './components/Header/Header'
-import StatsCards from './components/StatsCards/StatsCards'
-import DocumentTable from './components/DocumentTable/DocumentTable'
-import ActivityLog from './components/ActivityLog/ActivityLog'
+import Sidebar, { SIDEBAR_WIDTH } from './components/Layout/Sidebar'
 import Login from './components/Login/Login'
+import DashboardPage from './pages/DashboardPage'
+import UsersPage from './pages/UsersPage'
+import SettingsPage from './pages/SettingsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,19 +32,32 @@ const theme = createTheme({
   },
 })
 
-function Dashboard() {
+function AppLayout() {
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-      <Header />
-      <Container maxWidth="xl" sx={{ py: 3 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <StatsCards />
-          <Divider />
-          <DocumentTable />
-          <Divider />
-          <ActivityLog />
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      <Sidebar />
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          width: `calc(100% - ${SIDEBAR_WIDTH}px)`,
+          bgcolor: 'background.default',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <Header />
+        {/* Spacer for fixed AppBar */}
+        <Toolbar sx={{ minHeight: 56 }} />
+        <Box sx={{ p: 3, flexGrow: 1 }}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </Box>
-      </Container>
+      </Box>
     </Box>
   )
 }
@@ -61,7 +78,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <Dashboard />
+        <BrowserRouter>
+          <AppLayout />
+        </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>
   )

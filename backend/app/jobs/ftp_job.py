@@ -4,16 +4,15 @@ import logging
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.postgres import get_session
+from app.db.settings_store import get_setting
 from app.models.document import Document
 from app.models.activity_log import ActivityLog, write_log
 from app.models.ftp_seen_file import FtpSeenFile
 from app.models.system_config import SystemConfig
 from app.services.ftp_service import list_csv_files, download_csv_file
 from app.services.csv_processor import parse_csv, infer_document_type
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +25,27 @@ async def poll_ftp_and_ingest():
     job_start = time.monotonic()
     logger.info("FTP poll job started.")
 
+    # Load FTP settings from DB
+    host = await get_setting("ftp_host", "localhost")
+    port = int(await get_setting("ftp_port", "21") or "21")
+    user = await get_setting("ftp_user", "anonymous")
+    password = await get_setting("ftp_password", "") or ""
+    import_path = await get_setting("ftp_import_path", "/") or "/"
+
+    # Load field maps from DB
+    import json
+    field_maps_raw = await get_setting("document_type_field_maps", "{}")
+    try:
+        field_maps = json.loads(field_maps_raw or "{}")
+    except Exception:
+        field_maps = {}
+
     async with get_session() as session:
         async with session.begin():
             await session.merge(SystemConfig(key="last_ftp_poll_start", value=datetime.utcnow().isoformat()))
 
     try:
-        csv_files = list_csv_files()
+        csv_files = list_csv_files(host, port, user, password, import_path)
     except Exception as exc:
         logger.error(f"FTP listing failed: {exc}")
         async with get_session() as session:
@@ -46,12 +60,10 @@ async def poll_ftp_and_ingest():
                 await write_log(session, activity_type="ftp_poll", status="success", details="No CSV files found.")
         return
 
-    field_maps = settings.get_document_type_field_maps()
     new_files_count = 0
     total_docs_inserted = 0
 
     for filename in csv_files:
-        # Check if already processed
         async with get_session() as session:
             seen = await session.get(FtpSeenFile, filename)
 
@@ -64,7 +76,7 @@ async def poll_ftp_and_ingest():
         file_start = time.monotonic()
 
         try:
-            tmp_path = download_csv_file(filename)
+            tmp_path = download_csv_file(filename, host, port, user, password, import_path)
         except Exception as exc:
             logger.error(f"FTP download failed for {filename}: {exc}")
             async with get_session() as session:

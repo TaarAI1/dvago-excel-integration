@@ -5,8 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db.postgres import connect_db, close_db, get_session
-from app.services.retailpro_client import close_client
+from app.db.postgres import connect_db, close_db
 from app.scheduler import scheduler, setup_scheduler
 
 logging.basicConfig(
@@ -16,33 +15,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _seed_users():
+    """Create the initial admin user from env vars if no users exist yet."""
+    from sqlalchemy import select, func
+    from app.db.postgres import get_session
+    from app.models.user import User
+    from app.core.security import get_password_hash
+    import uuid
+
+    async with get_session() as session:
+        count = await session.scalar(select(func.count()).select_from(User))
+
+    if count == 0:
+        async with get_session() as session:
+            async with session.begin():
+                session.add(User(
+                    id=uuid.uuid4(),
+                    username=settings.dashboard_username,
+                    hashed_password=get_password_hash(settings.dashboard_password),
+                    is_active=True,
+                ))
+        logger.info(f"Seeded initial admin user: {settings.dashboard_username}")
+
+
+async def _seed_settings():
+    """Populate app_settings with env-var defaults for any missing keys."""
+    from app.db.settings_store import seed_defaults
+    env_overrides = {
+        "ftp_host": settings.ftp_host,
+        "ftp_port": str(settings.ftp_port),
+        "ftp_user": settings.ftp_user,
+        "ftp_password": settings.ftp_password,
+        "ftp_import_path": settings.ftp_base_path,
+        "retailpro_base_url": settings.retailpro_base_url,
+        "retailpro_api_key": settings.retailpro_api_key,
+        "retailpro_client": settings.retailpro_client,
+        "document_type_endpoints": settings.document_type_endpoints,
+        "document_type_field_maps": settings.document_type_field_maps,
+        "poll_cron_schedule": settings.poll_cron_schedule,
+    }
+    await seed_defaults(env_overrides)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     await connect_db(settings.get_async_database_url())
 
-    # Load cron from DB if previously configured
-    from app.models.system_config import SystemConfig
-    async with get_session() as session:
-        stored = await session.get(SystemConfig, "poll_cron_schedule")
-    cron = stored.value if stored else settings.poll_cron_schedule
+    await _seed_users()
+    await _seed_settings()
 
-    setup_scheduler(cron)
+    # Load cron schedules from app_settings
+    from app.db.settings_store import get_setting
+    poll_cron = await get_setting("poll_cron_schedule", settings.poll_cron_schedule)
+    sales_cron = await get_setting("sales_export_cron", "0 2 * * *")
+
+    setup_scheduler(poll_cron or settings.poll_cron_schedule, sales_cron or "0 2 * * *")
     scheduler.start()
-    logger.info(f"Scheduler started with cron: {cron}")
+    logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}")
 
     yield
 
     logger.info("Shutting down...")
     scheduler.shutdown(wait=False)
-    await close_client()
     await close_db()
 
 
 app = FastAPI(
     title="RetailPro Prism Integration",
     description="CSV to RetailPro sync via FTP polling — PostgreSQL backend",
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -55,8 +97,12 @@ app.add_middleware(
 )
 
 from app.api.routes import auth, schedule, process, documents, logs, stream, health
+from app.api.routes import users, settings as settings_routes, sales_export
 
 app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(settings_routes.router)
+app.include_router(sales_export.router)
 app.include_router(schedule.router)
 app.include_router(process.router)
 app.include_router(documents.router)
@@ -67,4 +113,4 @@ app.include_router(health.router)
 
 @app.get("/")
 async def root():
-    return {"message": "RetailPro Integration API v2 (PostgreSQL)", "docs": "/docs"}
+    return {"message": "RetailPro Integration API v3", "docs": "/docs"}

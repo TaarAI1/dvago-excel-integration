@@ -4,8 +4,6 @@ import httpx
 import logging
 import json
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -32,21 +30,21 @@ class MockRetailProClient(RetailProClientBase):
 
     async def post_document(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         import asyncio, uuid
-        await asyncio.sleep(0.05)  # simulate small latency
+        await asyncio.sleep(0.05)
         mock_sid = f"MOCK-{uuid.uuid4().hex[:8].upper()}"
         logger.debug(f"[MOCK] POST {endpoint} → sid={mock_sid}")
         return {"data": [{"sid": mock_sid}], "status": "success"}
 
 
 class RealRetailProClient(RetailProClientBase):
-    """Real HTTP client using httpx. A single shared client is reused across calls."""
+    """Real HTTP client using httpx."""
 
-    def __init__(self):
+    def __init__(self, base_url: str, api_key: str):
         self._client = httpx.AsyncClient(
-            base_url=settings.retailpro_base_url,
+            base_url=base_url,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {settings.retailpro_api_key}",
+                "Authorization": f"Bearer {api_key}",
             },
             timeout=30.0,
         )
@@ -67,26 +65,20 @@ class RealRetailProClient(RetailProClientBase):
         await self._client.aclose()
 
 
-def get_retailpro_client() -> RetailProClientBase:
-    """Factory: returns mock or real client based on RETAILPRO_CLIENT env var."""
-    if settings.retailpro_client.lower() == "real":
-        return RealRetailProClient()
+async def get_client() -> RetailProClientBase:
+    """
+    Build a RetailPro client using live settings from the DB.
+    Returns a fresh client on each call so config changes take effect immediately.
+    """
+    from app.db.settings_store import get_setting
+    client_mode = await get_setting("retailpro_client", default="mock")
+    if (client_mode or "mock").lower() == "real":
+        base_url = await get_setting("retailpro_base_url", default="")
+        api_key = await get_setting("retailpro_api_key", default="")
+        return RealRetailProClient(base_url=base_url or "", api_key=api_key or "")
     return MockRetailProClient()
 
 
-# Singleton shared across the app lifecycle
-_client_instance: RetailProClientBase = None
-
-
-def get_client() -> RetailProClientBase:
-    global _client_instance
-    if _client_instance is None:
-        _client_instance = get_retailpro_client()
-    return _client_instance
-
-
 async def close_client():
-    global _client_instance
-    if _client_instance and isinstance(_client_instance, RealRetailProClient):
-        await _client_instance.close()
-    _client_instance = None
+    """No-op: clients are now short-lived and closed per-job."""
+    pass
