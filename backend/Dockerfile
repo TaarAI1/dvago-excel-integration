@@ -12,16 +12,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Oracle Instant Client Basic (thick mode for oracledb)
-# Update the version variables below if a newer release is available.
+# Install Oracle Instant Client Basic (thick mode for oracledb).
+# Download is non-fatal: if Oracle CDN is unreachable, the build continues
+# and oracledb falls back to thin mode automatically.
 ARG OIC_VERSION=21.14.0.0.0
 ARG OIC_BUILD=2114000
 RUN mkdir -p /opt/oracle \
-    && wget -q "https://download.oracle.com/otn_software/linux/instantclient/${OIC_BUILD}/instantclient-basiclite-linux.x64-${OIC_VERSION}dbru.zip" \
-        -O /tmp/instantclient.zip \
-    && unzip -q /tmp/instantclient.zip -d /opt/oracle \
-    && mv /opt/oracle/instantclient_21_14 /opt/oracle/instantclient \
-    && rm /tmp/instantclient.zip
+    && ( \
+        wget --tries=3 --timeout=60 --no-verbose \
+            "https://download.oracle.com/otn_software/linux/instantclient/${OIC_BUILD}/instantclient-basiclite-linux.x64-${OIC_VERSION}dbru.zip" \
+            -O /tmp/instantclient.zip \
+        && unzip -q /tmp/instantclient.zip -d /opt/oracle \
+        && mv /opt/oracle/instantclient_21_14 /opt/oracle/instantclient \
+        && rm /tmp/instantclient.zip \
+        && echo "Oracle Instant Client installed at /opt/oracle/instantclient" \
+    ) || ( \
+        echo "WARNING: Oracle Instant Client download failed. oracledb will run in thin mode." \
+        && rm -f /tmp/instantclient.zip \
+    )
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 

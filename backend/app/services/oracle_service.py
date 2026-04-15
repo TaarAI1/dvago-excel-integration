@@ -20,6 +20,12 @@ def _ensure_thick_mode() -> None:
     global _thick_initialized, _thick_error
     if _thick_initialized:
         return
+    import os
+    if not os.path.isdir(_INSTANT_CLIENT_DIR):
+        _thick_error = f"Oracle Instant Client directory not found: {_INSTANT_CLIENT_DIR}"
+        _thick_initialized = True
+        logger.warning(f"oracledb thick mode unavailable: {_thick_error}. Using thin mode.")
+        return
     try:
         oracledb.init_oracle_client(lib_dir=_INSTANT_CLIENT_DIR)
         _thick_initialized = True
@@ -27,7 +33,7 @@ def _ensure_thick_mode() -> None:
     except Exception as exc:
         _thick_error = str(exc)
         _thick_initialized = True
-        logger.warning(f"oracledb thick mode init failed (thin mode may be used): {exc}")
+        logger.warning(f"oracledb thick mode init failed, using thin mode: {exc}")
 
 
 def _test_connection_sync(host: str, port: int, service_name: str, username: str, password: str) -> dict:
