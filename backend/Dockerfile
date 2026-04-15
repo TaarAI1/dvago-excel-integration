@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
-    libaio1 \
+    libaio1t64 \
     wget \
     unzip \
     ca-certificates \
