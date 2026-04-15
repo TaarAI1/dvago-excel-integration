@@ -18,5 +18,5 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 80
 
-# Replace __BACKEND_URL__ placeholder with the BACKEND_URL env var, then start nginx
-CMD ["/bin/sh", "-c", "sed \"s|__BACKEND_URL__|$BACKEND_URL|g\" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+# Replace placeholders with env vars, then start nginx
+CMD ["/bin/sh", "-c", "sed \"s|__BACKEND_URL__|$BACKEND_URL|g;s|__PORT__|${PORT:-80}|g\" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
