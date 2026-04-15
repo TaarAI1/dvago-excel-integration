@@ -33,20 +33,36 @@ const theme = createTheme({
 })
 
 function AppLayout() {
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
       <Box
         component="main"
         sx={{
           flexGrow: 1,
-          width: `calc(100% - ${SIDEBAR_WIDTH}px)`,
           bgcolor: 'background.default',
           display: 'flex',
           flexDirection: 'column',
+          ml: sidebarOpen ? `${SIDEBAR_WIDTH}px` : 0,
+          width: sidebarOpen ? `calc(100% - ${SIDEBAR_WIDTH}px)` : '100%',
+          transition: (theme) =>
+            theme.transitions.create(['margin', 'width'], {
+              easing: sidebarOpen
+                ? theme.transitions.easing.easeOut
+                : theme.transitions.easing.sharp,
+              duration: sidebarOpen
+                ? theme.transitions.duration.enteringScreen
+                : theme.transitions.duration.leavingScreen,
+            }),
         }}
       >
-        <Header />
+        <Header
+          sidebarOpen={sidebarOpen}
+          onSidebarToggle={() => setSidebarOpen(true)}
+        />
         {/* Spacer for fixed AppBar */}
         <Toolbar sx={{ minHeight: 56 }} />
         <Box sx={{ p: 3, flexGrow: 1 }}>

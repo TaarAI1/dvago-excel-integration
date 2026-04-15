@@ -1,11 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText,
-  Toolbar, Typography, Box, Divider,
+  Toolbar, Typography, Box, Divider, IconButton,
 } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import PeopleIcon from '@mui/icons-material/People'
 import SettingsIcon from '@mui/icons-material/Settings'
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 
 export const SIDEBAR_WIDTH = 220
 
@@ -15,13 +16,19 @@ const NAV_ITEMS = [
   { label: 'Configuration', path: '/settings', icon: <SettingsIcon /> },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  open: boolean
+  onClose: () => void
+}
+
+export default function Sidebar({ open, onClose }: SidebarProps) {
   const location = useLocation()
   const navigate = useNavigate()
 
   return (
     <Drawer
-      variant="permanent"
+      variant="persistent"
+      open={open}
       sx={{
         width: SIDEBAR_WIDTH,
         flexShrink: 0,
@@ -33,7 +40,8 @@ export default function Sidebar() {
         },
       }}
     >
-      <Toolbar sx={{ px: 2 }}>
+      {/* Logo + close button */}
+      <Toolbar sx={{ px: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2, color: 'white' }}>
             RetailPro
@@ -42,6 +50,9 @@ export default function Sidebar() {
             Integration
           </Typography>
         </Box>
+        <IconButton onClick={onClose} size="small" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+          <ChevronLeftIcon />
+        </IconButton>
       </Toolbar>
 
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.15)' }} />
