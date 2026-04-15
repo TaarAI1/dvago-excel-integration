@@ -60,25 +60,54 @@ async def _seed_settings():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
-    await connect_db(settings.get_async_database_url())
 
-    await _seed_users()
-    await _seed_settings()
+    # ── Database ──────────────────────────────────────────────────────────
+    try:
+        await connect_db(settings.get_async_database_url())
+    except Exception as exc:
+        logger.error(f"DB connect failed: {exc}. App will start but DB ops will fail.")
 
-    # Load cron schedules from app_settings
-    from app.db.settings_store import get_setting
-    poll_cron = await get_setting("poll_cron_schedule", settings.poll_cron_schedule)
-    sales_cron = await get_setting("sales_export_cron", "0 2 * * *")
+    # ── Bootstrap data ────────────────────────────────────────────────────
+    try:
+        await _seed_users()
+    except Exception as exc:
+        logger.error(f"User seed failed: {exc}")
 
-    setup_scheduler(poll_cron or settings.poll_cron_schedule, sales_cron or "0 2 * * *")
-    scheduler.start()
-    logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}")
+    try:
+        await _seed_settings()
+    except Exception as exc:
+        logger.error(f"Settings seed failed: {exc}")
 
+    # ── Scheduler ─────────────────────────────────────────────────────────
+    poll_cron = settings.poll_cron_schedule
+    sales_cron = "0 2 * * *"
+    try:
+        from app.db.settings_store import get_setting
+        poll_cron = (await get_setting("poll_cron_schedule")) or poll_cron
+        sales_cron = (await get_setting("sales_export_cron")) or sales_cron
+    except Exception as exc:
+        logger.warning(f"Could not load cron from DB, using defaults: {exc}")
+
+    try:
+        setup_scheduler(poll_cron, sales_cron)
+        scheduler.start()
+        logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}")
+    except Exception as exc:
+        logger.error(f"Scheduler start failed: {exc}")
+
+    logger.info("Startup complete — accepting requests.")
     yield
 
+    # ── Shutdown ──────────────────────────────────────────────────────────
     logger.info("Shutting down...")
-    scheduler.shutdown(wait=False)
-    await close_db()
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+    try:
+        await close_db()
+    except Exception:
+        pass
 
 
 app = FastAPI(

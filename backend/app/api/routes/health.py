@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.db.postgres import engine
+import app.db.postgres as _pg
 from app.scheduler import scheduler
 
 router = APIRouter(prefix="/api", tags=["health"])
@@ -7,11 +7,14 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 @router.get("/health")
 async def health_check():
+    """Lightweight health probe. Always returns HTTP 200."""
     db_ok = False
     try:
-        if engine:
+        engine = _pg.engine
+        if engine is not None:
+            from sqlalchemy import text
             async with engine.connect() as conn:
-                await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+                await conn.execute(text("SELECT 1"))
             db_ok = True
     except Exception:
         pass
