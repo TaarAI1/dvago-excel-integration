@@ -12,11 +12,9 @@ API_JOB_ID = "api_process_job"
 
 
 def setup_scheduler(poll_cron: str):
-    """Register jobs. Called once during FastAPI lifespan startup."""
     from app.jobs.ftp_job import poll_ftp_and_ingest
     from app.jobs.api_job import process_pending_docs
 
-    # Remove existing jobs if reconfiguring
     for job_id in (FTP_JOB_ID, API_JOB_ID):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
@@ -30,7 +28,6 @@ def setup_scheduler(poll_cron: str):
         coalesce=True,
         misfire_grace_time=60,
     )
-
     scheduler.add_job(
         process_pending_docs,
         trigger=IntervalTrigger(minutes=1),

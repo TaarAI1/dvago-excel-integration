@@ -1,13 +1,15 @@
 import csv
 import io
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from typing import Optional
-from datetime import datetime
+from sqlalchemy import select, func, and_
 
 from app.core.security import get_current_user
-from app.db.mongodb import get_db
-from app.models.activity_log import log_to_response
+from app.db.postgres import get_session
+from app.models.activity_log import ActivityLog, log_to_response
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -15,38 +17,39 @@ router = APIRouter(prefix="/api/logs", tags=["logs"])
 @router.get("")
 async def list_logs(
     activity_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None, description="success | failed | pending"),
+    status: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     _: str = Depends(get_current_user),
 ):
-    """Paginated activity log with optional filtering."""
-    db = get_db()
-    query = {}
+    filters = []
     if activity_type:
-        query["activity_type"] = activity_type
+        filters.append(ActivityLog.activity_type == activity_type)
     if status:
-        query["status"] = status
-
-    date_filter = {}
+        filters.append(ActivityLog.status == status)
     if date_from:
         try:
-            date_filter["$gte"] = datetime.fromisoformat(date_from)
+            filters.append(ActivityLog.timestamp >= datetime.fromisoformat(date_from))
         except ValueError:
             pass
     if date_to:
         try:
-            date_filter["$lte"] = datetime.fromisoformat(date_to)
+            filters.append(ActivityLog.timestamp <= datetime.fromisoformat(date_to))
         except ValueError:
             pass
-    if date_filter:
-        query["timestamp"] = date_filter
 
-    total = await db.activity_logs.count_documents(query)
-    cursor = db.activity_logs.find(query).sort("timestamp", -1).skip(offset).limit(limit)
-    logs = await cursor.to_list(length=limit)
+    async with get_session() as session:
+        total = await session.scalar(
+            select(func.count()).select_from(ActivityLog).where(*filters)
+        )
+        result = await session.execute(
+            select(ActivityLog).where(*filters)
+            .order_by(ActivityLog.timestamp.desc())
+            .offset(offset).limit(limit)
+        )
+        logs = result.scalars().all()
 
     return {
         "total": total,
@@ -63,16 +66,18 @@ async def export_logs(
     status: Optional[str] = Query(None),
     _: str = Depends(get_current_user),
 ):
-    """Export all logs as CSV or JSON file download."""
-    db = get_db()
-    query = {}
+    filters = []
     if activity_type:
-        query["activity_type"] = activity_type
+        filters.append(ActivityLog.activity_type == activity_type)
     if status:
-        query["status"] = status
+        filters.append(ActivityLog.status == status)
 
-    cursor = db.activity_logs.find(query).sort("timestamp", -1)
-    logs = await cursor.to_list(length=10000)
+    async with get_session() as session:
+        result = await session.execute(
+            select(ActivityLog).where(*filters).order_by(ActivityLog.timestamp.desc()).limit(10000)
+        )
+        logs = result.scalars().all()
+
     records = [log_to_response(l) for l in logs]
 
     if fmt == "json":
@@ -84,13 +89,9 @@ async def export_logs(
             headers={"Content-Disposition": "attachment; filename=activity_logs.json"},
         )
 
-    # CSV export
     if not records:
-        output = io.StringIO()
-        output.write("No data\n")
-        output.seek(0)
         return StreamingResponse(
-            io.BytesIO(output.read().encode()),
+            io.BytesIO(b"No data\n"),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=activity_logs.csv"},
         )

@@ -1,17 +1,19 @@
 version: '3.9'
 
 services:
-  mongodb:
-    image: mongo:7.0
-    container_name: retailpro_mongodb
+  postgres:
+    image: postgres:16-alpine
+    container_name: retailpro_postgres
     ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
+      - "5432:5432"
     environment:
-      MONGO_INITDB_DATABASE: retailpro_integration
+      POSTGRES_DB: retailpro_integration
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,9 +28,9 @@ services:
     env_file:
       - .env
     environment:
-      MONGODB_URL: mongodb://mongodb:27017
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/retailpro_integration
     depends_on:
-      mongodb:
+      postgres:
         condition: service_healthy
     volumes:
       - ./backend:/app
@@ -45,4 +47,4 @@ services:
       - api
 
 volumes:
-  mongo_data:
+  postgres_data:

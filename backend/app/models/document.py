@@ -1,30 +1,38 @@
-from pydantic import BaseModel, Field
-from typing import Optional, Any, Dict
+import uuid
 from datetime import datetime
-from bson import ObjectId
+from sqlalchemy import String, Boolean, Text, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from app.db.postgres import Base
 
 
-class DocumentModel(BaseModel):
-    document_type: str  # "item_master" | "receiving_voucher" | "inventory_adjustment"
-    original_data: Dict[str, Any]
-    retailprosid: Optional[str] = None
-    posted: bool = False
-    has_error: bool = False
-    error_message: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    posted_at: Optional[datetime] = None
-    source_file: Optional[str] = None  # name of CSV file this row came from
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    original_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    retailprosid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    has_error: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_file: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
-def document_to_response(doc: dict) -> dict:
-    """Convert MongoDB document to JSON-serializable dict."""
-    doc = dict(doc)
-    if "_id" in doc:
-        doc["id"] = str(doc.pop("_id"))
-    for key, val in doc.items():
-        if isinstance(val, ObjectId):
-            doc[key] = str(val)
-        elif isinstance(val, datetime):
-            doc[key] = val.isoformat()
-    return doc
+def document_to_response(doc: Document) -> dict:
+    return {
+        "id": str(doc.id),
+        "document_type": doc.document_type,
+        "original_data": doc.original_data,
+        "retailprosid": doc.retailprosid,
+        "posted": doc.posted,
+        "has_error": doc.has_error,
+        "error_message": doc.error_message,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+        "posted_at": doc.posted_at.isoformat() if doc.posted_at else None,
+        "source_file": doc.source_file,
+    }

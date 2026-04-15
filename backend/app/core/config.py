@@ -1,13 +1,14 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Optional
 import json
 
 
 class Settings(BaseSettings):
-    # MongoDB
-    mongodb_url: str = Field(default="mongodb://localhost:27017", alias="MONGODB_URL")
-    mongodb_db_name: str = Field(default="retailpro_integration", alias="MONGODB_DB_NAME")
+    # PostgreSQL — Railway sets DATABASE_URL automatically when you add a Postgres plugin
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/retailpro_integration",
+        alias="DATABASE_URL",
+    )
 
     # FTP
     ftp_host: str = Field(default="localhost", alias="FTP_HOST")
@@ -34,17 +35,24 @@ class Settings(BaseSettings):
     dashboard_password: str = Field(default="admin123", alias="DASHBOARD_PASSWORD")
 
     # Document type → endpoint mapping (JSON string)
-    # e.g. '{"item_master": "/items", "receiving_voucher": "/receiving", "inventory_adjustment": "/inventory"}'
     document_type_endpoints: str = Field(
         default='{"item_master": "/items", "receiving_voucher": "/receiving", "inventory_adjustment": "/inventory"}',
         alias="DOCUMENT_TYPE_ENDPOINTS",
     )
 
     # Field mappings per document type (JSON string)
-    # e.g. '{"item_master": {"CSV_COL": "mongo_field"}, ...}'
     document_type_field_maps: str = Field(default="{}", alias="DOCUMENT_TYPE_FIELD_MAPS")
 
     model_config = {"env_file": ".env", "populate_by_name": True}
+
+    def get_async_database_url(self) -> str:
+        """Ensure URL uses asyncpg driver prefix."""
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
 
     def get_document_type_endpoints(self) -> dict:
         return json.loads(self.document_type_endpoints)
