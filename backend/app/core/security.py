@@ -1,5 +1,13 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import bcrypt as _bcrypt_mod
+
+# passlib 1.7.4 crashes on import with bcrypt >= 4.0 because __about__ was removed.
+# Patch it in before passlib loads so the version check doesn't blow up.
+if not hasattr(_bcrypt_mod, "__about__"):
+    class _FakeAbout:
+        __version__ = getattr(_bcrypt_mod, "__version__", "4.0.1")
+    _bcrypt_mod.__about__ = _FakeAbout()
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext

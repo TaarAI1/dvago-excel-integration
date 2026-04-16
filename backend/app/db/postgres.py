@@ -26,7 +26,7 @@ async def connect_db(database_url: str):
 
     # Create all tables if they don't exist
     async with engine.begin() as conn:
-        from app.models import document, activity_log, system_config  # noqa: import triggers table registration
+        import app.models  # noqa: registers all models with Base.metadata
         await conn.run_sync(Base.metadata.create_all)
 
     logger.info("Connected to PostgreSQL and tables ensured.")
