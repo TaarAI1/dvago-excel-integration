@@ -25,6 +25,12 @@ class TestConnectionRequest(BaseModel):
     api_key: str = ""       # RetailPro only
 
 
+class RetailProAuthRequest(BaseModel):
+    base_url: str       # e.g. http://192.168.1.100
+    username: str
+    password: str
+
+
 @router.get("")
 async def get_settings(_: str = Depends(get_current_user)):
     """Return all settings grouped by category. Sensitive values are redacted."""
@@ -116,15 +122,93 @@ async def run_oracle_query(body: OracleQueryRequest, _: str = Depends(get_curren
 
 
 @router.post("/test/retailpro")
-async def test_retailpro(body: TestConnectionRequest, _: str = Depends(get_current_user)):
-    """Test RetailPro API reachability with provided URL and key."""
+async def test_retailpro(body: RetailProAuthRequest, _: str = Depends(get_current_user)):
+    """
+    Authenticate against the RetailPro Prism API using the 3-step nonce challenge.
+
+    Step 1 – GET /v1/rest/auth           → extract Auth-Nonce from response headers
+    Step 2 – Compute Auth-Nonce-Response  = ((Auth-Nonce // 13) % 99999) * 17
+    Step 3 – GET /v1/rest/auth?pwd=&usr= with Auth-Nonce + Auth-Nonce-Response headers
+             → extract Auth-Session from response headers
+
+    Returns the session token on success, or the full server response on failure.
+    """
     import httpx
+
+    base = body.base_url.rstrip("/")
+    auth_url = f"{base}/v1/rest/auth"
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                body.base_url.rstrip("/") + "/",
-                headers={"Authorization": f"Bearer {body.api_key}"},
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+            # ── Step 1: get the nonce challenge ────────────────────────────
+            step1 = await client.get(auth_url)
+            auth_nonce_raw = step1.headers.get("Auth-Nonce") or step1.headers.get("auth-nonce")
+
+            if auth_nonce_raw is None:
+                # Surface the full response so the user can debug
+                return {
+                    "ok": False,
+                    "step": 1,
+                    "status_code": step1.status_code,
+                    "headers": dict(step1.headers),
+                    "body": step1.text,
+                    "error": "Auth-Nonce header not found in step-1 response.",
+                }
+
+            try:
+                auth_nonce = int(auth_nonce_raw)
+            except ValueError:
+                return {
+                    "ok": False,
+                    "step": 1,
+                    "status_code": step1.status_code,
+                    "headers": dict(step1.headers),
+                    "body": step1.text,
+                    "error": f"Auth-Nonce value is not an integer: {auth_nonce_raw!r}",
+                }
+
+            # ── Step 2: compute the nonce response ─────────────────────────
+            # Mirrors the C# logic exactly:
+            #   truncatedValue     = authNonce / 13      (integer division)
+            #   remainder          = truncatedValue % 99999
+            #   authNonceResponse  = remainder * 17
+            truncated = auth_nonce // 13
+            remainder = truncated % 99999
+            auth_nonce_response = remainder * 17
+
+            # ── Step 3: send credentials + computed headers ────────────────
+            step3 = await client.get(
+                f"{auth_url}?pwd={body.password}&usr={body.username}",
+                headers={
+                    "Auth-Nonce": str(auth_nonce),
+                    "Auth-Nonce-Response": str(auth_nonce_response),
+                },
             )
-        return {"ok": True, "status_code": response.status_code, "error": None}
+
+            auth_session = (
+                step3.headers.get("Auth-Session")
+                or step3.headers.get("auth-session")
+            )
+
+            if auth_session:
+                return {
+                    "ok": True,
+                    "session": auth_session,
+                    "status_code": step3.status_code,
+                    "message": "Authentication successful. Session token received.",
+                }
+
+            # Auth-Session missing — return full response so user can diagnose
+            return {
+                "ok": False,
+                "step": 3,
+                "status_code": step3.status_code,
+                "headers": dict(step3.headers),
+                "body": step3.text,
+                "error": "Auth-Session header not found in step-3 response. Check credentials.",
+            }
+
+    except httpx.ConnectError as exc:
+        return {"ok": False, "step": 1, "error": f"Cannot connect to RetailPro server: {exc}"}
     except Exception as exc:
-        return {"ok": False, "status_code": None, "error": str(exc)}
+        return {"ok": False, "error": str(exc)}

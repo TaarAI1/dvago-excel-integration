@@ -81,6 +81,108 @@ function TestButton({ label, onClick, result }:
   )
 }
 
+type RetailProResult = {
+  ok: boolean; message?: string; session?: string; status_code?: number
+  step?: number; headers?: Record<string, string>; body?: string; error?: string
+} | null
+
+function RetailProTestButton({ onClick, result }: { onClick: () => Promise<void>; result: RetailProResult }) {
+  const [loading, setLoading] = useState(false)
+  const handle = async () => { setLoading(true); await onClick(); setLoading(false) }
+
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Button variant="outlined" size="small"
+        startIcon={loading ? <CircularProgress size={12} /> : <WifiIcon sx={{ fontSize: 15 }} />}
+        onClick={handle} disabled={loading} sx={{ height: 32, fontSize: '0.8rem' }}>
+        {loading ? 'Authenticating…' : 'Test RetailPro Connectivity'}
+      </Button>
+
+      {result && (
+        <Box sx={{
+          mt: 1.5, borderRadius: '6px', overflow: 'hidden',
+          border: '1px solid', borderColor: result.ok ? '#d1fae5' : '#fee2e2',
+        }}>
+          {/* Status bar */}
+          <Box sx={{
+            px: 1.5, py: 1,
+            bgcolor: result.ok ? '#f0fdf4' : '#fef2f2',
+            display: 'flex', alignItems: 'center', gap: 1,
+          }}>
+            {result.ok
+              ? <CheckCircleOutlinedIcon sx={{ fontSize: 15, color: '#15803d' }} />
+              : <ErrorOutlinedIcon sx={{ fontSize: 15, color: '#b91c1c' }} />}
+            <Typography sx={{ fontSize: '0.8rem', fontWeight: 600,
+              color: result.ok ? '#166534' : '#7f1d1d' }}>
+              {result.ok ? result.message : result.error}
+            </Typography>
+            {result.status_code && (
+              <Typography sx={{ fontSize: '0.72rem', color: result.ok ? '#15803d' : '#b91c1c',
+                ml: 'auto', fontFamily: 'monospace' }}>
+                HTTP {result.status_code}
+              </Typography>
+            )}
+          </Box>
+
+          {/* Session token (success) */}
+          {result.ok && result.session && (
+            <Box sx={{ px: 1.5, py: 1, bgcolor: 'white', borderTop: '1px solid #d1fae5' }}>
+              <Typography sx={{ fontSize: '0.7rem', color: '#6b7280', mb: 0.25 }}>Auth-Session</Typography>
+              <Typography sx={{ fontSize: '0.75rem', fontFamily: 'monospace',
+                color: '#166534', wordBreak: 'break-all' }}>
+                {result.session}
+              </Typography>
+            </Box>
+          )}
+
+          {/* Failure details */}
+          {!result.ok && (result.headers || result.body) && (
+            <Box sx={{ px: 1.5, py: 1, bgcolor: 'white', borderTop: '1px solid #fee2e2' }}>
+              {result.step && (
+                <Typography sx={{ fontSize: '0.7rem', color: '#9ca3af', mb: 1 }}>
+                  Failed at step {result.step}
+                </Typography>
+              )}
+              {result.headers && Object.keys(result.headers).length > 0 && (
+                <Box sx={{ mb: 1 }}>
+                  <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#374151', mb: 0.5 }}>
+                    Response Headers
+                  </Typography>
+                  <Box sx={{ bgcolor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '4px',
+                    p: 1, maxHeight: 120, overflow: 'auto' }}>
+                    {Object.entries(result.headers).map(([k, v]) => (
+                      <Box key={k} sx={{ display: 'flex', gap: 1, fontSize: '0.72rem', fontFamily: 'monospace' }}>
+                        <Typography component="span" sx={{ color: '#1a56db', fontSize: 'inherit',
+                          fontFamily: 'inherit', flexShrink: 0 }}>{k}:</Typography>
+                        <Typography component="span" sx={{ color: '#374151', fontSize: 'inherit',
+                          fontFamily: 'inherit', wordBreak: 'break-all' }}>{v}</Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                </Box>
+              )}
+              {result.body && (
+                <Box>
+                  <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#374151', mb: 0.5 }}>
+                    Response Body
+                  </Typography>
+                  <Box sx={{ bgcolor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '4px',
+                    p: 1, maxHeight: 160, overflow: 'auto' }}>
+                    <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap', color: '#374151', wordBreak: 'break-word' }}>
+                      {result.body}
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  )
+}
+
 // Inline (no top-margin) version used when paired with other buttons
 function OracleTestButton({ onClick, result }:
   { onClick: () => Promise<void>; result: { ok: boolean; error: string | null } | null }) {
@@ -108,7 +210,16 @@ export default function SettingsPage() {
   const [saveError, setSaveError] = useState('')
   const [ftpResult, setFtpResult] = useState<{ ok: boolean; error: string | null } | null>(null)
   const [oracleResult, setOracleResult] = useState<{ ok: boolean; error: string | null } | null>(null)
-  const [retailproResult, setRetailproResult] = useState<{ ok: boolean; error: string | null } | null>(null)
+  const [retailproResult, setRetailproResult] = useState<{
+    ok: boolean
+    message?: string
+    session?: string
+    status_code?: number
+    step?: number
+    headers?: Record<string, string>
+    body?: string
+    error?: string
+  } | null>(null)
 
   // Oracle query panel
   const [queryOpen, setQueryOpen] = useState(false)
@@ -158,8 +269,16 @@ export default function SettingsPage() {
     catch { setOracleResult({ ok: false, error: 'Request failed' }) }
   }
   const testRetailPro = async () => {
-    try { const r = await apiClient.post('/api/settings/test/retailpro', { base_url: g('retailpro_base_url'), api_key: g('retailpro_api_key') }); setRetailproResult(r.data) }
-    catch { setRetailproResult({ ok: false, error: 'Request failed' }) }
+    try {
+      const r = await apiClient.post('/api/settings/test/retailpro', {
+        base_url: g('retailpro_base_url'),
+        username: g('retailpro_username'),
+        password: g('retailpro_password'),
+      })
+      setRetailproResult(r.data)
+    } catch (e: any) {
+      setRetailproResult({ ok: false, error: e.response?.data?.detail || 'Request failed' })
+    }
   }
 
   const runOracleQuery = async () => {
@@ -359,13 +478,14 @@ export default function SettingsPage() {
 
           <TabPanel value={tab} index={2}>
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12 }}>{F('retailpro_base_url', 'Base URL')}</Grid>
-              <Grid size={{ xs: 12, sm: 8 }}>{F('retailpro_api_key', 'API Key', true)}</Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>{F('retailpro_client', 'Mode (mock / real)')}</Grid>
-              <Grid size={{ xs: 12 }}>{F('document_type_endpoints', 'Endpoint Map (JSON)')}</Grid>
-              <Grid size={{ xs: 12 }}>{F('document_type_field_maps', 'Field Maps (JSON)')}</Grid>
+              <Grid size={{ xs: 12 }}>{F('retailpro_base_url', 'Server URL  (e.g. http://192.168.1.100)')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('retailpro_username', 'Username')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('retailpro_password', 'Password', true)}</Grid>
             </Grid>
-            <TestButton label="Test RetailPro API" onClick={testRetailPro} result={retailproResult} />
+
+            {/* Test button */}
+            <RetailProTestButton onClick={testRetailPro} result={retailproResult} />
+
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="retailpro" />
           </TabPanel>

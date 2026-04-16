@@ -25,7 +25,9 @@ SETTING_DEFINITIONS = [
     ("ftp_import_path",           "ftp",          "FTP Import Path",             "/",            False),
     ("ftp_export_path",           "ftp",          "FTP Export Path",             "/exports",     False),
     # RetailPro
-    ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "https://api.retailpro.example.com", False),
+    ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "http://your-retailpro-server", False),
+    ("retailpro_username",        "retailpro",    "RetailPro Username",          "",             False),
+    ("retailpro_password",        "retailpro",    "RetailPro Password",          "",             True),
     ("retailpro_api_key",         "retailpro",    "RetailPro API Key",           "mock-key",     True),
     ("retailpro_client",          "retailpro",    "Client Mode (mock/real)",     "mock",         False),
     ("document_type_endpoints",   "retailpro",    "Document Type Endpoints (JSON)",
