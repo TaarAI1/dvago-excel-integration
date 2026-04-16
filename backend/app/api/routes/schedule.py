@@ -31,9 +31,9 @@ async def configure_schedule(config: ScheduleConfig, _: str = Depends(get_curren
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {exc}")
 
-    async with get_session() as session:
-        async with session.begin():
-            await session.merge(SystemConfig(key="poll_cron_schedule", value=config.cron))
+    # Persist to app_settings (the authoritative store read by /status)
+    from app.db.settings_store import update_settings
+    await update_settings({"poll_cron_schedule": config.cron})
 
     return {"message": "Schedule updated.", "cron": config.cron}
 
