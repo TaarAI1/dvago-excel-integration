@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Box, TextField, Button, Typography, Alert, CircularProgress, InputAdornment, IconButton } from '@mui/material'
-import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
+import PersonOutlineIcon from '@mui/icons-material/PersonOutlined'
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'

@@ -1,6 +1,6 @@
 import { Box, Typography, Skeleton } from '@mui/material'
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutlined'
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
 import SpeedOutlinedIcon from '@mui/icons-material/SpeedOutlined'
