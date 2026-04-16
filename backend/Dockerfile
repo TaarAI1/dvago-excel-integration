@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps: PostgreSQL client libs + Oracle Instant Client prerequisites
+# System deps: compiler, PostgreSQL libs, and Oracle Instant Client prerequisites
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -12,24 +12,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Oracle Instant Client Basic (thick mode for oracledb).
-# Download is non-fatal: if Oracle CDN is unreachable, the build continues
-# and oracledb falls back to thin mode automatically.
-ARG OIC_VERSION=21.14.0.0.0
-ARG OIC_BUILD=2114000
+# libaio1t64 is the Debian Bookworm name; create a symlink under the old name so
+# Oracle Instant Client shared libs can find it at runtime.
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+           /usr/lib/x86_64-linux-gnu/libaio.so.1 || true
+
+# ── Oracle Instant Client 19.22 (LTS) ────────────────────────────────────────
+# 19.x is Long-Term Support and has the most reliable public download URL.
+# Thick mode is required for Oracle DBs using legacy password verifiers (0x939).
 RUN mkdir -p /opt/oracle \
-    && ( \
-        wget --tries=3 --timeout=60 --no-verbose \
-            "https://download.oracle.com/otn_software/linux/instantclient/${OIC_BUILD}/instantclient-basiclite-linux.x64-${OIC_VERSION}dbru.zip" \
-            -O /tmp/instantclient.zip \
-        && unzip -q /tmp/instantclient.zip -d /opt/oracle \
-        && mv /opt/oracle/instantclient_21_14 /opt/oracle/instantclient \
-        && rm /tmp/instantclient.zip \
-        && echo "Oracle Instant Client installed at /opt/oracle/instantclient" \
-    ) || ( \
-        echo "WARNING: Oracle Instant Client download failed. oracledb will run in thin mode." \
-        && rm -f /tmp/instantclient.zip \
-    )
+    && wget --tries=3 --timeout=120 --no-verbose \
+        "https://download.oracle.com/otn_software/linux/instantclient/1922000/instantclient-basiclite-linux.x64-19.22.0.0.0dbru.zip" \
+        -O /tmp/ic.zip \
+    && unzip -q /tmp/ic.zip -d /opt/oracle \
+    && ICDIR=$(find /opt/oracle -maxdepth 1 -type d -name "instantclient_*" | head -1) \
+    && mv "$ICDIR" /opt/oracle/instantclient \
+    && rm /tmp/ic.zip \
+    && echo "Oracle Instant Client installed:" \
+    && ls /opt/oracle/instantclient | head -5
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 

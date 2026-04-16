@@ -17,23 +17,31 @@ _INSTANT_CLIENT_DIR = "/opt/oracle/instantclient"
 
 
 def _ensure_thick_mode() -> None:
+    """
+    Try to initialize oracledb thick mode.
+    Strategy:
+      1. If _INSTANT_CLIENT_DIR exists, pass it explicitly.
+      2. Otherwise call init_oracle_client() with no args so oracledb can
+         auto-discover the libs from LD_LIBRARY_PATH / system paths.
+      3. If both fail, fall back to thin mode and record the error.
+    oracledb raises an exception if init_oracle_client() is called more than
+    once, so we guard with _thick_initialized.
+    """
     global _thick_initialized, _thick_error
     if _thick_initialized:
         return
     import os
-    if not os.path.isdir(_INSTANT_CLIENT_DIR):
-        _thick_error = f"Oracle Instant Client directory not found: {_INSTANT_CLIENT_DIR}"
-        _thick_initialized = True
-        logger.warning(f"oracledb thick mode unavailable: {_thick_error}. Using thin mode.")
-        return
+    _thick_initialized = True
     try:
-        oracledb.init_oracle_client(lib_dir=_INSTANT_CLIENT_DIR)
-        _thick_initialized = True
+        if os.path.isdir(_INSTANT_CLIENT_DIR):
+            oracledb.init_oracle_client(lib_dir=_INSTANT_CLIENT_DIR)
+        else:
+            # Let oracledb find the libs via LD_LIBRARY_PATH
+            oracledb.init_oracle_client()
         logger.info("oracledb thick mode initialized.")
     except Exception as exc:
         _thick_error = str(exc)
-        _thick_initialized = True
-        logger.warning(f"oracledb thick mode init failed, using thin mode: {exc}")
+        logger.warning(f"oracledb thick mode init failed, running in thin mode: {exc}")
 
 
 def _test_connection_sync(host: str, port: int, service_name: str, username: str, password: str) -> dict:
