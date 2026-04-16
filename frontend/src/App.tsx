@@ -51,7 +51,8 @@ const theme = createTheme({
     MuiCssBaseline: {
       styleOverrides: {
         '*': { boxSizing: 'border-box' },
-        body: { fontFeatureSettings: '"cv11", "ss01"' },
+        'html, body': { overflowX: 'hidden', fontFeatureSettings: '"cv11", "ss01"' },
+        '#root': { minHeight: '100vh', display: 'flex', flexDirection: 'column' },
       },
     },
     MuiCard: {
@@ -177,13 +178,14 @@ function AppLayout() {
         component="main"
         sx={{
           flexGrow: 1,
+          minWidth: 0,          // prevent flex child from overflowing
+          overflow: 'hidden',   // no horizontal scroll
           bgcolor: 'background.default',
           display: 'flex',
           flexDirection: 'column',
           ml: sidebarOpen ? `${SIDEBAR_WIDTH}px` : 0,
-          width: sidebarOpen ? `calc(100% - ${SIDEBAR_WIDTH}px)` : '100%',
           transition: (t) =>
-            t.transitions.create(['margin', 'width'], {
+            t.transitions.create('margin', {
               easing: sidebarOpen ? t.transitions.easing.easeOut : t.transitions.easing.sharp,
               duration: sidebarOpen ? t.transitions.duration.enteringScreen : t.transitions.duration.leavingScreen,
             }),

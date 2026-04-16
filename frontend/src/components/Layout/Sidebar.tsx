@@ -31,7 +31,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       variant="persistent"
       open={open}
       sx={{
-        width: SIDEBAR_WIDTH,
+        width: open ? SIDEBAR_WIDTH : 0,
         flexShrink: 0,
         '& .MuiDrawer-paper': {
           width: SIDEBAR_WIDTH,
@@ -39,7 +39,10 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           bgcolor: '#0f172a',
           color: 'white',
           border: 'none',
-          boxShadow: '4px 0 24px 0 rgb(0 0 0 / 0.18)',
+          position: 'fixed',   // taken out of flex flow so main content ml is the only offset
+          height: '100vh',
+          overflowX: 'hidden',
+          boxShadow: '4px 0 16px 0 rgb(0 0 0 / 0.15)',
         },
       }}
     >
@@ -57,11 +60,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <IntegrationInstructionsIcon sx={{ fontSize: 18, color: 'white' }} />
           </Box>
           <Box>
-            <Typography sx={{ fontWeight: 700, fontSize: 13, lineHeight: 1.2, color: '#f8fafc' }}>
-              RetailPro
+            <Typography sx={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, color: '#f8fafc' }}>
+              RetailPro CSV
             </Typography>
-            <Typography sx={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.2 }}>
-              Integration
+            <Typography sx={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.3 }}>
+              Data Exchange
             </Typography>
           </Box>
         </Box>

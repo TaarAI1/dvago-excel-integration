@@ -80,7 +80,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           </Box>
 
           <Typography sx={{ color: '#f8fafc', fontWeight: 800, fontSize: '1.9rem', lineHeight: 1.15, mb: 1.5 }}>
-            RetailPro<br />Integration
+            RetailPro CSV<br />Data Exchange
           </Typography>
           <Typography sx={{ color: '#94a3b8', fontSize: '0.95rem', lineHeight: 1.6, maxWidth: 300 }}>
             Automated FTP-to-RetailPro document sync with real-time monitoring and full audit trail.
