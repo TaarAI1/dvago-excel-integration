@@ -78,7 +78,7 @@ async def import_excel(
 
     raw = await file.read()
     try:
-        result = await process_excel_batch(raw)
+        result = await process_excel_batch(raw, source_file=file.filename or "upload.xlsx")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

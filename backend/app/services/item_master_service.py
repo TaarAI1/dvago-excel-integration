@@ -340,19 +340,26 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
     sid_overrides: {json_field: value} – computed SIDs (dcssid, vendsid, etc.)
     existing_item: API response item dict if this is an update; None for create.
 
-    For create: top-level sid and invnextend[0].sid must be None (API creates new records).
-    For update: sid and rowversion come from the existing API response.
+    For UPDATE: sid and rowversion come from the existing API response (required by RetailPro).
+    For CREATE: sid = None so RetailPro assigns a new SID; rowversion from Excel ROW_VERSION column.
     """
     payload: dict = {}
 
-    # sid / rowversion
     if existing_item:
+        # UPDATE — must use the server's current sid + rowversion
         payload["sid"] = existing_item.get("sid")
         payload["rowversion"] = existing_item.get("rowversion")
     else:
+        # CREATE — sid must be None; include rowversion from Excel if present
         payload["sid"] = None
+        rv = row.get("ROW_VERSION")
+        if rv is not None:
+            try:
+                payload["rowversion"] = int(rv)
+            except (ValueError, TypeError):
+                payload["rowversion"] = rv
 
-    # Map Excel columns → JSON fields (skip sid/rowversion already set)
+    # Map remaining Excel columns → JSON fields
     for col, json_key in MAIN_FIELD_MAP.items():
         if col in row and row[col] is not None and json_key not in payload:
             payload[json_key] = _to_json(row[col])
@@ -460,11 +467,15 @@ async def process_row(
         sid = saved_data[0].get("sid") if saved_data else None
 
         if save_resp.status_code in (200, 201) and sid:
-            result.update({"action": action, "sid": sid, "ok": True})
+            result.update({
+                "action": action, "sid": sid, "ok": True,
+                "api_response": save_json,
+            })
         else:
             result.update({
                 "action": action, "ok": False,
-                "error": f"HTTP {save_resp.status_code}: {save_resp.text[:500]}",
+                "api_response": save_resp.text,
+                "error": save_resp.text,          # full response as error_message
             })
 
     except Exception as exc:
@@ -473,9 +484,39 @@ async def process_row(
     return result
 
 
+# ── DB persistence ──────────────────────────────────────────────────────────────
+
+async def _persist_result(row: dict, result: dict, source_file: str) -> None:
+    """Save a processed row result to the documents table."""
+    import uuid as _uuid
+    from app.db.postgres import get_session
+    from app.models.document import Document
+
+    ok = result.get("ok", False)
+    error_msg = result.get("error")
+
+    # Store the serialisable row dict (convert datetime → str)
+    safe_row = {k: (_to_json(v)) for k, v in row.items()}
+
+    async with get_session() as session:
+        async with session.begin():
+            doc = Document(
+                id=_uuid.uuid4(),
+                document_type="item_master",
+                original_data=safe_row,
+                retailprosid=result.get("sid") if ok else None,
+                posted=ok,
+                has_error=not ok,
+                error_message=error_msg,          # full API response on failure
+                source_file=source_file,
+                posted_at=datetime.utcnow() if ok else None,
+            )
+            session.add(doc)
+
+
 # ── Batch entry point ───────────────────────────────────────────────────────────
 
-async def process_excel_batch(file_bytes: bytes) -> dict:
+async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master_import.xlsx") -> dict:
     """
     Full pipeline for an uploaded Excel file:
       parse → auth (once) → per-row processing with shared caches.
@@ -522,6 +563,11 @@ async def process_excel_batch(file_bytes: bytes) -> dict:
                 sbs_cache=sbs_cache,
             )
             results.append(row_result)
+            # Persist to documents table immediately after each row
+            try:
+                await _persist_result(row, row_result, source_file)
+            except Exception as db_exc:
+                logger.warning("DB persist failed for UPC %s: %s", row_result["upc"], db_exc)
             logger.info(
                 "Item %s: %s %s",
                 row_result["upc"],
