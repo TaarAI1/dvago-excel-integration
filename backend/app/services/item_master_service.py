@@ -475,7 +475,8 @@ async def process_row(
             result.update({
                 "action": action, "ok": False,
                 "api_response": save_resp.text,
-                "error": save_resp.text,          # full response as error_message
+                "error": save_resp.text,
+                "_payload_sent": payload,   # stored so UI can show what was sent
             })
 
     except Exception as exc:
@@ -497,6 +498,10 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
 
     # Store the serialisable row dict (convert datetime → str)
     safe_row = {k: (_to_json(v)) for k, v in row.items()}
+
+    # On failure, embed the sent payload so the UI can show it alongside the error
+    if not ok and result.get("_payload_sent"):
+        safe_row["_payload_sent"] = result["_payload_sent"]
 
     async with get_session() as session:
         async with session.begin():

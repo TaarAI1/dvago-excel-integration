@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
@@ -10,6 +10,7 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 
@@ -33,13 +34,31 @@ interface DocsResponse {
   items: DocItem[]
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+interface Batch {
+  source_file: string
+  count: number
+  latest: string | null
+  posted: number
+  errors: number
+}
+
+// ── Date helper: dd/MM/yyyy HH:mm ─────────────────────────────────────────────
+
+const fmt = (iso: string | null): string => {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const dd   = String(d.getDate()).padStart(2, '0')
+  const mm   = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  const hh   = String(d.getHours()).padStart(2, '0')
+  const min  = String(d.getMinutes()).padStart(2, '0')
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`
+}
+
+// ── Cell helper ───────────────────────────────────────────────────────────────
 
 const cell = (doc: DocItem, key: string): string =>
   String(doc.original_data?.[key] ?? '—')
-
-const fmt = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString() : '—'
 
 // ── Status chip ───────────────────────────────────────────────────────────────
 
@@ -69,7 +88,7 @@ function StatusChip({ doc }: { doc: DocItem }) {
   )
 }
 
-// ── Detail dialog ─────────────────────────────────────────────────────────────
+// ── Info row (detail dialog) ──────────────────────────────────────────────────
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -86,6 +105,8 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+// ── Detail dialog ─────────────────────────────────────────────────────────────
+
 function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => void }) {
   if (!doc) return null
 
@@ -99,30 +120,31 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
   const sbs   = cell(doc, 'SBS_NO')
   const alu   = cell(doc, 'ALU')
 
-  // Try to parse error as JSON for pretty-print
+  // Payload sent to RetailPro (only present on error records)
+  const payloadSent = doc.original_data?._payload_sent as Record<string, unknown> | undefined
+
+  // Pretty-print error
   let errorDisplay = doc.error_message || ''
-  try {
-    const parsed = JSON.parse(doc.error_message || '')
-    errorDisplay = JSON.stringify(parsed, null, 2)
-  } catch { /* keep raw string */ }
+  try { errorDisplay = JSON.stringify(JSON.parse(doc.error_message || ''), null, 2) } catch { /* raw */ }
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth
       slotProps={{ paper: { sx: { borderRadius: '8px', overflow: 'hidden' } } }}>
 
-      {/* ── Header strip ── */}
-      <Box sx={{ bgcolor: doc.has_error ? '#fef2f2' : doc.posted ? '#f0fdf4' : '#fffbeb',
+      {/* Header */}
+      <Box sx={{
+        bgcolor: doc.has_error ? '#fef2f2' : doc.posted ? '#f0fdf4' : '#fffbeb',
         borderBottom: `2px solid ${doc.has_error ? '#fecaca' : doc.posted ? '#bbf7d0' : '#fde68a'}`,
-        px: 3, py: 2 }}>
+        px: 3, py: 2,
+      }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
           <StatusChip doc={doc} />
           <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'monospace' }}>
             {fmt(doc.created_at)}
           </Typography>
         </Box>
-        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827',
-          lineHeight: 1.3, mt: 0.5 }}>
-          {desc}
+        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827', lineHeight: 1.3, mt: 0.5 }}>
+          {desc !== '—' ? desc : '(no description)'}
         </Typography>
         {desc2 !== '—' && (
           <Typography sx={{ fontSize: '0.78rem', color: '#6b7280', mt: 0.25 }}>{desc2}</Typography>
@@ -133,49 +155,62 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
         </Typography>
       </Box>
 
-      <DialogContent sx={{ p: 0 }}>
-        {/* ── Item details ── */}
+      <DialogContent sx={{ p: 0, maxHeight: '72vh', overflowY: 'auto' }}>
+        {/* Item details */}
         <Box sx={{ px: 3, pt: 2, pb: 1 }}>
           <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
             textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>
             Item Details
           </Typography>
-
-          <InfoRow label="DCS Code"     value={dcs} />
-          <InfoRow label="Vendor Code"  value={vend} />
-          <InfoRow label="Tax Code"     value={tax} />
-          {sbs !== '—' && <InfoRow label="Subsidiary No"  value={sbs} />}
-          {alu !== '—' && <InfoRow label="ALU"            value={alu} />}
+          <InfoRow label="DCS Code"    value={dcs} />
+          <InfoRow label="Vendor Code" value={vend} />
+          <InfoRow label="Tax Code"    value={tax} />
+          {sbs  !== '—' && <InfoRow label="Subsidiary No" value={sbs} />}
+          {alu  !== '—' && <InfoRow label="ALU"           value={alu} />}
           {cost !== '—' && <InfoRow label="Cost"          value={cost} />}
-          <InfoRow label="Source File"  value={doc.source_file || '—'} />
+          <InfoRow label="Source File" value={doc.source_file || '—'} />
           {doc.retailprosid && (
             <InfoRow label="RetailPro SID"
-              value={
-                <Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem',
-                  color: '#15803d' }}>
-                  {doc.retailprosid}
-                </Typography>
-              } />
+              value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem',
+                color: '#15803d' }}>{doc.retailprosid}</Typography>} />
           )}
           {doc.posted_at && <InfoRow label="Posted At" value={fmt(doc.posted_at)} />}
         </Box>
 
-        {/* ── Error section ── */}
+        {/* Error response */}
         {doc.error_message && (
           <Box sx={{ mx: 3, mb: 2, mt: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
               <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
                 textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                Error Response
+                API Error Response
               </Typography>
             </Box>
-            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca',
-              borderRadius: '6px', p: 1.5, maxHeight: 240, overflow: 'auto' }}>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px',
+              p: 1.5, maxHeight: 200, overflow: 'auto' }}>
               <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace',
                 whiteSpace: 'pre-wrap', color: '#7f1d1d', wordBreak: 'break-word',
                 lineHeight: 1.6 }}>
                 {errorDisplay}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+
+        {/* Payload sent */}
+        {payloadSent && (
+          <Box sx={{ mx: 3, mb: 2, mt: doc.error_message ? 0 : 1 }}>
+            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+              textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1 }}>
+              Payload Sent to RetailPro
+            </Typography>
+            <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+              p: 1.5, maxHeight: 260, overflow: 'auto' }}>
+              <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word',
+                lineHeight: 1.6 }}>
+                {JSON.stringify(payloadSent, null, 2)}
               </Typography>
             </Box>
           </Box>
@@ -197,8 +232,7 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
 function Pill({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75,
-      px: 1.5, py: 0.5, border: '1px solid #e5e7eb', borderRadius: '6px',
-      bgcolor: 'white' }}>
+      px: 1.5, py: 0.5, border: '1px solid #e5e7eb', borderRadius: '6px', bgcolor: 'white' }}>
       <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: color }} />
       <Typography sx={{ fontSize: '0.72rem', color: '#374151' }}>
         <b>{value}</b> {label}
@@ -207,49 +241,128 @@ function Pill({ label, value, color }: { label: string; value: number; color: st
   )
 }
 
+// ── Table style helpers ───────────────────────────────────────────────────────
+
+const thSx = {
+  fontSize: '0.68rem', fontWeight: 600, color: '#6b7280',
+  textTransform: 'uppercase' as const, letterSpacing: '0.04em',
+  py: 1, px: 1.5, borderBottom: '1px solid #e5e7eb',
+}
+
+const tdSx = {
+  fontSize: '0.78rem', color: '#374151',
+  py: 0.75, px: 1.5, borderBottom: '1px solid #f3f4f6',
+}
+
 // ── Item Master tab ───────────────────────────────────────────────────────────
 
 function ItemMasterTab() {
   const qc = useQueryClient()
-  const [page, setPage]     = useState(0)
-  const pageSize             = 100
-  const [status, setStatus] = useState('')
-  const [search, setSearch] = useState('')
-  const [detail, setDetail] = useState<DocItem | null>(null)
+  const [page, setPage]           = useState(0)
+  const pageSize                   = 100
+  const [status, setStatus]       = useState('')
+  const [search, setSearch]       = useState('')
+  const [detail, setDetail]       = useState<DocItem | null>(null)
+  const [selectedBatch, setSelectedBatch] = useState<string>('')
 
+  // ── Batches list ─────────────────────────────────────────────────────────
+  const { data: batches, isFetching: batchFetching } = useQuery<Batch[]>({
+    queryKey: ['im-batches'],
+    queryFn: () =>
+      apiClient.get('/api/documents/batches', { params: { document_type: 'item_master' } })
+        .then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  // Auto-select the most-recent batch on first load
+  useEffect(() => {
+    if (batches && batches.length > 0 && !selectedBatch) {
+      setSelectedBatch(batches[0].source_file)
+    }
+  }, [batches, selectedBatch])
+
+  // Active batch stats from the batches list
+  const activeBatch = batches?.find(b => b.source_file === selectedBatch)
+
+  // ── Documents for the selected batch ────────────────────────────────────
   const params: Record<string, string | number> = {
     document_type: 'item_master',
     limit: pageSize,
     offset: page * pageSize,
-    ...(status ? { status } : {}),
+    ...(selectedBatch ? { source_file: selectedBatch } : {}),
+    ...(status        ? { status }                     : {}),
   }
 
   const { data, isLoading, isFetching } = useQuery<DocsResponse>({
     queryKey: ['imports-im', params],
     queryFn: () => apiClient.get('/api/documents', { params }).then(r => r.data),
     refetchInterval: 30_000,
+    enabled: !!selectedBatch,
   })
 
-  const items = data?.items ?? []
+  const items    = data?.items ?? []
   const filtered = search
     ? items.filter(d => JSON.stringify(d).toLowerCase().includes(search.toLowerCase()))
     : items
 
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize)
 
-  const posted  = items.filter(d => d.posted).length
-  const errors  = items.filter(d => d.has_error).length
-  const pending = items.filter(d => !d.posted && !d.has_error).length
+  const posted  = activeBatch?.posted  ?? 0
+  const errors  = activeBatch?.errors  ?? 0
+  const total   = activeBatch?.count   ?? 0
+  const pending = total - posted - errors
 
   return (
     <Box>
-      {/* Toolbar */}
+      {/* Batch selector */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
-        <Pill label="posted"  value={posted}           color="#22c55e" />
-        <Pill label="errors"  value={errors}           color="#ef4444" />
-        <Pill label="pending" value={pending}          color="#f59e0b" />
-        <Pill label="total"   value={data?.total ?? 0} color="#6b7280" />
+        <FolderOutlinedIcon sx={{ fontSize: 15, color: '#9ca3af' }} />
+        <Typography sx={{ fontSize: '0.72rem', color: '#374151', fontWeight: 600 }}>Batch:</Typography>
+        <FormControl size="small" sx={{ minWidth: 260 }}>
+          <Select value={selectedBatch} displayEmpty
+            onChange={e => { setSelectedBatch(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}
+            renderValue={v => {
+              if (!v) return <em style={{ color: '#9ca3af' }}>Select a batch…</em>
+              const b = batches?.find(x => x.source_file === v)
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>{v}</span>
+                  {b && (
+                    <Typography component="span"
+                      sx={{ fontSize: '0.65rem', color: '#9ca3af', ml: 0.5 }}>
+                      ({b.count} rows · {fmt(b.latest)})
+                    </Typography>
+                  )}
+                </Box>
+              )
+            }}>
+            {(batches ?? []).map(b => (
+              <MenuItem key={b.source_file} value={b.source_file}>
+                <Box sx={{ width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 500 }}>{b.source_file}</Typography>
+                    <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>{fmt(b.latest)}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, mt: 0.25 }}>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#15803d' }}>✓ {b.posted} posted</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#b91c1c' }}>✗ {b.errors} errors</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#6b7280' }}>{b.count} total</Typography>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {batchFetching && <CircularProgress size={12} />}
+      </Box>
 
+      {/* Stat pills + toolbar */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <Pill label="posted"  value={posted}  color="#22c55e" />
+        <Pill label="errors"  value={errors}  color="#ef4444" />
+        <Pill label="pending" value={pending} color="#f59e0b" />
+        <Pill label="total"   value={total}   color="#6b7280" />
         {isFetching && <CircularProgress size={13} sx={{ ml: 0.5 }} />}
 
         <Box sx={{ flexGrow: 1 }} />
@@ -272,7 +385,10 @@ function ItemMasterTab() {
 
         <Tooltip title="Refresh">
           <IconButton size="small"
-            onClick={() => qc.invalidateQueries({ queryKey: ['imports-im'] })}
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['imports-im'] })
+              qc.invalidateQueries({ queryKey: ['im-batches'] })
+            }}
             sx={{ borderRadius: '4px', border: '1px solid #e5e7eb' }}>
             <RefreshIcon sx={{ fontSize: 16 }} />
           </IconButton>
@@ -283,7 +399,7 @@ function ItemMasterTab() {
       <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px',
         overflow: 'hidden' }}>
         <TableContainer>
-          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 900 }}>
+          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 860 }}>
             <TableHead>
               <TableRow sx={{ bgcolor: '#f9fafb' }}>
                 <TableCell sx={thSx} width={44}>#</TableCell>
@@ -293,28 +409,33 @@ function ItemMasterTab() {
                 <TableCell sx={thSx} width={100}>Vendor</TableCell>
                 <TableCell sx={thSx} width={80}>Status</TableCell>
                 <TableCell sx={thSx} width={150}>RetailPro SID</TableCell>
-                <TableCell sx={thSx} width={130}>Source File</TableCell>
                 <TableCell sx={thSx} width={140}>Imported At</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {isLoading ? (
+              {!selectedBatch ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={8} align="center"
+                    sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                    Select a batch above to view records.
+                  </TableCell>
+                </TableRow>
+              ) : isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
                     <CircularProgress size={22} />
                   </TableCell>
                 </TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center"
+                  <TableCell colSpan={8} align="center"
                     sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
                     No records found.
                   </TableCell>
                 </TableRow>
               ) : filtered.map((doc, i) => (
                 <TableRow key={doc.id} onClick={() => setDetail(doc)}
-                  sx={{ cursor: 'pointer',
-                    '&:hover': { bgcolor: '#f0f7ff' },
+                  sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f0f7ff' },
                     transition: 'background 0.1s' }}>
                   <TableCell sx={tdSx}>{page * pageSize + i + 1}</TableCell>
                   <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>
@@ -334,10 +455,6 @@ function ItemMasterTab() {
                     color: '#6b7280' }}>
                     {doc.retailprosid || '—'}
                   </TableCell>
-                  <TableCell sx={{ ...tdSx, overflow: 'hidden',
-                    textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#9ca3af' }}>
-                    {doc.source_file || '—'}
-                  </TableCell>
                   <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
                     {fmt(doc.created_at)}
                   </TableCell>
@@ -347,7 +464,7 @@ function ItemMasterTab() {
           </Table>
         </TableContainer>
 
-        {/* Pagination footer */}
+        {/* Pagination */}
         {(data?.total ?? 0) > pageSize && (
           <Box sx={{ px: 2, py: 1, borderTop: '1px solid #f3f4f6',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -371,28 +488,7 @@ function ItemMasterTab() {
   )
 }
 
-// ── Table style helpers ───────────────────────────────────────────────────────
-
-const thSx = {
-  fontSize: '0.68rem',
-  fontWeight: 600,
-  color: '#6b7280',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.04em',
-  py: 1,
-  px: 1.5,
-  borderBottom: '1px solid #e5e7eb',
-}
-
-const tdSx = {
-  fontSize: '0.78rem',
-  color: '#374151',
-  py: 0.75,
-  px: 1.5,
-  borderBottom: '1px solid #f3f4f6',
-}
-
-// ── Module tab registry (add new modules here) ────────────────────────────────
+// ── Module tab registry ───────────────────────────────────────────────────────
 
 const MODULE_TABS = [
   { label: 'Item Master', content: <ItemMasterTab /> },
@@ -410,7 +506,7 @@ export default function ImportsPage() {
           Import Records
         </Typography>
         <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af' }}>
-          All documents imported from FTP — automatically processed on schedule.
+          All documents imported from FTP — automatically processed on schedule. Click a row for details.
         </Typography>
       </Box>
 

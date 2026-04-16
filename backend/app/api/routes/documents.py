@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
@@ -14,10 +14,12 @@ from app.models.system_config import SystemConfig
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
-def _build_filters(document_type, status, date_from, date_to):
+def _build_filters(document_type, status, date_from, date_to, source_file=None):
     filters = []
     if document_type:
         filters.append(Document.document_type == document_type)
+    if source_file:
+        filters.append(Document.source_file == source_file)
     if status == "posted":
         filters.append(Document.posted == True)
     elif status == "error":
@@ -37,17 +39,53 @@ def _build_filters(document_type, status, date_from, date_to):
     return filters
 
 
+@router.get("/batches")
+async def list_batches(
+    document_type: Optional[str] = Query(None),
+    _: str = Depends(get_current_user),
+):
+    """Return one row per source_file, ordered newest-first, with per-batch counts."""
+    async with get_session() as session:
+        q = (
+            select(
+                Document.source_file,
+                func.count(Document.id).label("count"),
+                func.max(Document.created_at).label("latest"),
+                func.sum(case((Document.posted == True, 1), else_=0)).label("posted"),
+                func.sum(case((Document.has_error == True, 1), else_=0)).label("errors"),
+            )
+            .group_by(Document.source_file)
+            .order_by(func.max(Document.created_at).desc())
+        )
+        if document_type:
+            q = q.where(Document.document_type == document_type)
+        result = await session.execute(q)
+        rows = result.all()
+
+    return [
+        {
+            "source_file": r.source_file or "(unknown)",
+            "count": r.count,
+            "latest": r.latest.isoformat() if r.latest else None,
+            "posted": int(r.posted or 0),
+            "errors": int(r.errors or 0),
+        }
+        for r in rows
+    ]
+
+
 @router.get("")
 async def list_documents(
     document_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    source_file: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     _: str = Depends(get_current_user),
 ):
-    filters = _build_filters(document_type, status, date_from, date_to)
+    filters = _build_filters(document_type, status, date_from, date_to, source_file)
 
     async with get_session() as session:
         total = await session.scalar(

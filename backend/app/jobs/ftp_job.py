@@ -174,6 +174,13 @@ async def poll_ftp_and_ingest():
 
         # ── Route: CSV ───────────────────────────────────────────────────────
         if lower_name.endswith(".csv"):
+            # Filename matches an Excel-module keyword → must be uploaded as .xlsx
+            if _detect_excel_module(filename):
+                logger.warning(
+                    f"Skipping '{filename}' — matches an Excel module keyword but is .csv. "
+                    f"Upload as .xlsx to process via Item Master."
+                )
+                continue
             tmp_path = None
             try:
                 tmp_path = download_csv_file(filename, host, port, user, password, import_path)
