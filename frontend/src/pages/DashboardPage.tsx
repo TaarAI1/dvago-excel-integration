@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Button, Select, MenuItem, FormControl,
-  InputLabel, Chip, IconButton, Tooltip, CircularProgress, Divider,
+  InputLabel, Chip, IconButton, Tooltip, CircularProgress,
 } from '@mui/material'
 import type { SelectChangeEvent } from '@mui/material'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
@@ -11,7 +11,6 @@ import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 import StatsCards from '../components/StatsCards/StatsCards'
-import DocumentTable from '../components/DocumentTable/DocumentTable'
 import ActivityLog from '../components/ActivityLog/ActivityLog'
 
 const CRON_OPTIONS = [
@@ -183,15 +182,6 @@ export default function DashboardPage() {
 
       {/* Stats */}
       <StatsCards />
-
-      <Divider />
-
-      {/* Documents */}
-      <Section title="Documents">
-        <DocumentTable />
-      </Section>
-
-      <Divider />
 
       {/* Activity log */}
       <Section title="Activity Log">
