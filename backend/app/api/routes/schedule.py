@@ -15,7 +15,11 @@ class ScheduleConfig(BaseModel):
 
 @router.get("/status")
 async def get_status(_: str = Depends(get_current_user)):
-    return get_schedule_status()
+    from app.db.settings_store import get_setting
+    status = get_schedule_status()
+    # Include the saved cron so the frontend can initialise the dropdown correctly
+    status["cron"] = await get_setting("poll_cron_schedule", "*/15 * * * *")
+    return status
 
 
 @router.post("/configure")

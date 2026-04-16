@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Box, Typography, Button, Select, MenuItem, FormControl,
   InputLabel, Chip, IconButton, Tooltip, CircularProgress, Divider,
@@ -25,6 +25,7 @@ const CRON_OPTIONS = [
 
 interface ScheduleStatus {
   running: boolean
+  cron?: string
   ftp_job?: { next_run: string | null }
   sales_export_job?: { next_run: string | null }
 }
@@ -50,13 +51,23 @@ function Section({ title, children, action }: { title?: string; children: React.
 
 export default function DashboardPage() {
   const qc = useQueryClient()
-  const [selectedCron, setSelectedCron] = useState('*/15 * * * *')
+  // Empty string until we load the real value from the backend
+  const [selectedCron, setSelectedCron] = useState('')
+  const [cronReady, setCronReady] = useState(false)
 
   const { data: scheduleStatus } = useQuery<ScheduleStatus>({
     queryKey: ['scheduleStatus'],
     queryFn: () => apiClient.get('/api/schedule/status').then((r) => r.data),
     refetchInterval: 15000,
   })
+
+  // Initialise dropdown from server on first load only (don't override user's mid-session choice)
+  useEffect(() => {
+    if (!cronReady && scheduleStatus?.cron) {
+      setSelectedCron(scheduleStatus.cron)
+      setCronReady(true)
+    }
+  }, [scheduleStatus, cronReady])
 
   const configureMutation = useMutation({
     mutationFn: (cron: string) => apiClient.post('/api/schedule/configure', { cron }),
@@ -105,8 +116,18 @@ export default function DashboardPage() {
 
         <FormControl size="small" sx={{ minWidth: 160 }}>
           <InputLabel>FTP Schedule</InputLabel>
-          <Select value={selectedCron} label="FTP Schedule" onChange={handleCronChange}>
+          <Select value={selectedCron} label="FTP Schedule" onChange={handleCronChange}
+            displayEmpty renderValue={(v) => {
+              const match = CRON_OPTIONS.find((o) => o.value === v)
+              return match ? match.label : (v || '…')
+            }}>
             {CRON_OPTIONS.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+            {/* Show current value as an option if it isn't one of the presets */}
+            {selectedCron && !CRON_OPTIONS.some((o) => o.value === selectedCron) && (
+              <MenuItem value={selectedCron} sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                {selectedCron}
+              </MenuItem>
+            )}
           </Select>
         </FormControl>
 
