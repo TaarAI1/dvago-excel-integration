@@ -126,7 +126,7 @@ app.add_middleware(
 )
 
 from app.api.routes import auth, schedule, process, documents, logs, stream, health
-from app.api.routes import users, settings as settings_routes, sales_export
+from app.api.routes import users, settings as settings_routes, sales_export, item_master
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -138,6 +138,7 @@ app.include_router(documents.router)
 app.include_router(logs.router)
 app.include_router(stream.router)
 app.include_router(health.router)
+app.include_router(item_master.router)
 
 
 @app.get("/")

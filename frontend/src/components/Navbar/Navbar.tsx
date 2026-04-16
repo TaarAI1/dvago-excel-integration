@@ -7,11 +7,13 @@ import { useState } from 'react'
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined'
 import PeopleOutlinedIcon from '@mui/icons-material/PeopleOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
+import TableChartOutlinedIcon from '@mui/icons-material/TableChartOutlined'
 import LogoutIcon from '@mui/icons-material/Logout'
 import StorageIcon from '@mui/icons-material/Storage'
 
 const NAV_LINKS = [
   { label: 'Dashboard', path: '/', icon: <DashboardOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Item Master', path: '/item-master', icon: <TableChartOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Users', path: '/users', icon: <PeopleOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Configuration', path: '/settings', icon: <SettingsOutlinedIcon sx={{ fontSize: 16 }} /> },
 ]

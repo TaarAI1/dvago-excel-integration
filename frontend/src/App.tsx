@@ -7,6 +7,7 @@ import Login from './components/Login/Login'
 import DashboardPage from './pages/DashboardPage'
 import UsersPage from './pages/UsersPage'
 import SettingsPage from './pages/SettingsPage'
+import ItemMasterPage from './pages/ItemMasterPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10000 } },
@@ -155,6 +156,7 @@ function AppLayout() {
       >
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/item-master" element={<ItemMasterPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
