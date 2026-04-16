@@ -7,7 +7,6 @@ import {
   DialogContent, DialogActions,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
@@ -72,70 +71,122 @@ function StatusChip({ doc }: { doc: DocItem }) {
 
 // ── Detail dialog ─────────────────────────────────────────────────────────────
 
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1,
+      py: 0.9, borderBottom: '1px solid #f3f4f6', '&:last-child': { border: 0 } }}>
+      <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af', minWidth: 120, flexShrink: 0 }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontSize: '0.78rem', color: '#111827', fontWeight: 500,
+        wordBreak: 'break-word', flex: 1 }}>
+        {value}
+      </Typography>
+    </Box>
+  )
+}
+
 function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => void }) {
   if (!doc) return null
-  const upc  = cell(doc, 'UPC')
-  const desc = cell(doc, 'DESCRIPTION1') !== '—' ? cell(doc, 'DESCRIPTION1') : cell(doc, 'DESCRIPTION')
+
+  const upc   = cell(doc, 'UPC')
+  const desc  = cell(doc, 'DESCRIPTION1') !== '—' ? cell(doc, 'DESCRIPTION1') : cell(doc, 'DESCRIPTION')
+  const desc2 = cell(doc, 'DESCRIPTION2')
+  const cost  = cell(doc, 'COST')
+  const dcs   = cell(doc, 'DCS_CODE')
+  const vend  = cell(doc, 'VEND_CODE')
+  const tax   = cell(doc, 'TAX_CODE')
+  const sbs   = cell(doc, 'SBS_NO')
+  const alu   = cell(doc, 'ALU')
+
+  // Try to parse error as JSON for pretty-print
+  let errorDisplay = doc.error_message || ''
+  try {
+    const parsed = JSON.parse(doc.error_message || '')
+    errorDisplay = JSON.stringify(parsed, null, 2)
+  } catch { /* keep raw string */ }
 
   return (
-    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ pb: 0.5, fontSize: '0.95rem', fontWeight: 600 }}>
-        {desc}
-        <Typography component="span" sx={{ ml: 1.5, fontSize: '0.72rem',
-          color: '#9ca3af', fontFamily: 'monospace' }}>
-          UPC {upc}
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth
+      PaperProps={{ sx: { borderRadius: '8px', overflow: 'hidden' } }}>
+
+      {/* ── Header strip ── */}
+      <Box sx={{ bgcolor: doc.has_error ? '#fef2f2' : doc.posted ? '#f0fdf4' : '#fffbeb',
+        borderBottom: `2px solid ${doc.has_error ? '#fecaca' : doc.posted ? '#bbf7d0' : '#fde68a'}`,
+        px: 3, py: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+          <StatusChip doc={doc} />
+          <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+            {fmt(doc.created_at)}
+          </Typography>
+        </Box>
+        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827',
+          lineHeight: 1.3, mt: 0.5 }}>
+          {desc}
         </Typography>
-      </DialogTitle>
-      <DialogContent dividers>
-        {/* Summary grid */}
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1.5, mb: 2 }}>
-          {([
-            ['Status',        <StatusChip doc={doc} />],
-            ['RetailPro SID', doc.retailprosid || '—'],
-            ['Source File',   doc.source_file  || '—'],
-            ['DCS Code',      cell(doc, 'DCS_CODE')],
-            ['Vendor Code',   cell(doc, 'VEND_CODE')],
-            ['Tax Code',      cell(doc, 'TAX_CODE')],
-            ['Imported At',   fmt(doc.created_at)],
-            ['Posted At',     fmt(doc.posted_at)],
-          ] as [string, React.ReactNode][]).map(([label, value]) => (
-            <Box key={label}>
-              <Typography sx={{ fontSize: '0.67rem', color: '#9ca3af', mb: 0.2 }}>{label}</Typography>
-              <Typography sx={{ fontSize: '0.78rem', color: '#374151' }}>{value}</Typography>
-            </Box>
-          ))}
+        {desc2 !== '—' && (
+          <Typography sx={{ fontSize: '0.78rem', color: '#6b7280', mt: 0.25 }}>{desc2}</Typography>
+        )}
+        <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af', mt: 0.5,
+          fontFamily: 'monospace', letterSpacing: '0.04em' }}>
+          UPC: {upc}
+        </Typography>
+      </Box>
+
+      <DialogContent sx={{ p: 0 }}>
+        {/* ── Item details ── */}
+        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+          <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>
+            Item Details
+          </Typography>
+
+          <InfoRow label="DCS Code"     value={dcs} />
+          <InfoRow label="Vendor Code"  value={vend} />
+          <InfoRow label="Tax Code"     value={tax} />
+          {sbs !== '—' && <InfoRow label="Subsidiary No"  value={sbs} />}
+          {alu !== '—' && <InfoRow label="ALU"            value={alu} />}
+          {cost !== '—' && <InfoRow label="Cost"          value={cost} />}
+          <InfoRow label="Source File"  value={doc.source_file || '—'} />
+          {doc.retailprosid && (
+            <InfoRow label="RetailPro SID"
+              value={
+                <Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem',
+                  color: '#15803d' }}>
+                  {doc.retailprosid}
+                </Typography>
+              } />
+          )}
+          {doc.posted_at && <InfoRow label="Posted At" value={fmt(doc.posted_at)} />}
         </Box>
 
-        {/* Error */}
+        {/* ── Error section ── */}
         {doc.error_message && (
-          <Box sx={{ mb: 2 }}>
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#374151', mb: 0.5 }}>
-              API Error Response
-            </Typography>
-            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px',
-              p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+          <Box sx={{ mx: 3, mb: 2, mt: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Error Response
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca',
+              borderRadius: '6px', p: 1.5, maxHeight: 240, overflow: 'auto' }}>
               <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace',
-                whiteSpace: 'pre-wrap', color: '#7f1d1d', wordBreak: 'break-word' }}>
-                {doc.error_message}
+                whiteSpace: 'pre-wrap', color: '#7f1d1d', wordBreak: 'break-word',
+                lineHeight: 1.6 }}>
+                {errorDisplay}
               </Typography>
             </Box>
           </Box>
         )}
-
-        {/* Raw row */}
-        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#374151', mb: 0.5 }}>
-          Original Row Data
-        </Typography>
-        <Box sx={{ bgcolor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '4px',
-          p: 1.5, maxHeight: 260, overflow: 'auto' }}>
-          <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap', color: '#374151' }}>
-            {JSON.stringify(doc.original_data, null, 2)}
-          </Typography>
-        </Box>
       </DialogContent>
-      <DialogActions sx={{ px: 2.5, pb: 2 }}>
-        <Button size="small" variant="outlined" onClick={onClose}>Close</Button>
+
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
+        <Button size="small" variant="outlined" onClick={onClose}
+          sx={{ height: 30, fontSize: '0.78rem' }}>
+          Close
+        </Button>
       </DialogActions>
     </Dialog>
   )
@@ -244,7 +295,6 @@ function ItemMasterTab() {
                 <TableCell sx={thSx} width={150}>RetailPro SID</TableCell>
                 <TableCell sx={thSx} width={130}>Source File</TableCell>
                 <TableCell sx={thSx} width={140}>Imported At</TableCell>
-                <TableCell sx={{ ...thSx, textAlign: 'right' }} width={52}></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -262,8 +312,10 @@ function ItemMasterTab() {
                   </TableCell>
                 </TableRow>
               ) : filtered.map((doc, i) => (
-                <TableRow key={doc.id}
-                  sx={{ '&:hover': { bgcolor: '#f9fafb' }, cursor: 'default' }}>
+                <TableRow key={doc.id} onClick={() => setDetail(doc)}
+                  sx={{ cursor: 'pointer',
+                    '&:hover': { bgcolor: '#f0f7ff' },
+                    transition: 'background 0.1s' }}>
                   <TableCell sx={tdSx}>{page * pageSize + i + 1}</TableCell>
                   <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>
                     {cell(doc, 'UPC')}
@@ -288,15 +340,6 @@ function ItemMasterTab() {
                   </TableCell>
                   <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
                     {fmt(doc.created_at)}
-                  </TableCell>
-                  <TableCell align="right" sx={tdSx}>
-                    <Tooltip title="View details">
-                      <IconButton size="small" onClick={() => setDetail(doc)}
-                        sx={{ width: 24, height: 24, borderRadius: '4px', color: '#9ca3af',
-                          '&:hover': { color: '#1a56db', bgcolor: '#eff6ff' } }}>
-                        <InfoOutlinedIcon sx={{ fontSize: 13 }} />
-                      </IconButton>
-                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}
