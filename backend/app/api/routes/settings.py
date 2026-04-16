@@ -139,7 +139,7 @@ async def test_retailpro(body: RetailProAuthRequest, _: str = Depends(get_curren
     auth_url = f"{base}/v1/rest/auth"
 
     try:
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
             # ── Step 1: get the nonce challenge ────────────────────────────
             step1 = await client.get(auth_url)
             auth_nonce_raw = step1.headers.get("Auth-Nonce") or step1.headers.get("auth-nonce")
