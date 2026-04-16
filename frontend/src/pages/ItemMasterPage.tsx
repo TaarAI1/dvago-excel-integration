@@ -8,7 +8,7 @@ import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
-import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline'
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
 import apiClient from '../api/client'
 
