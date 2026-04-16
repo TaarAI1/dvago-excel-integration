@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   Box, Typography, Tabs, Tab, TextField, Button, Alert,
   CircularProgress, InputAdornment, IconButton, Paper, Grid,
-  Chip, Divider,
+  Divider,
 } from '@mui/material'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
@@ -77,7 +77,7 @@ function TestButton({
   }
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 2 }}>
+    <Box sx={{ mt: 2 }}>
       <Button
         variant="outlined"
         size="small"
@@ -88,11 +88,12 @@ function TestButton({
         {label}
       </Button>
       {result !== null && (
-        <Chip
-          label={result.ok ? 'Connected' : result.error || 'Failed'}
-          color={result.ok ? 'success' : 'error'}
-          size="small"
-        />
+        <Alert
+          severity={result.ok ? 'success' : 'error'}
+          sx={{ mt: 1.5, '& .MuiAlert-message': { wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }}
+        >
+          {result.ok ? 'Connection successful.' : (result.error || 'Connection failed.')}
+        </Alert>
       )}
     </Box>
   )
