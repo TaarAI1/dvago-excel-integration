@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Box, Typography, Chip, Select, MenuItem, FormControl, InputLabel,
-  TextField, Button, IconButton, Tooltip, Paper, Stack,
+  TextField, Button, IconButton, Tooltip, Stack,
   Switch, FormControlLabel, CircularProgress,
 } from '@mui/material'
 import DownloadIcon from '@mui/icons-material/Download'
@@ -104,8 +104,7 @@ export default function ActivityLog() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5, flexWrap: 'wrap' }}>
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>Activity Log</Typography>
-        <Typography variant="body2" color="text.secondary">{filtered.length} entries</Typography>
+        <Typography sx={{ fontSize: '0.8rem', color: '#6b7280' }}>{filtered.length} entries</Typography>
         {isLoading && <CircularProgress size={14} />}
 
         <Box sx={{ flexGrow: 1 }} />
@@ -159,7 +158,8 @@ export default function ActivityLog() {
         <Button size="small" variant="outlined" onClick={() => setLiveEntries([])}>Clear</Button>
       </Box>
 
-      <Paper variant="outlined" sx={{ height: 400, overflow: 'auto', p: 1 }}>
+      <Box sx={{ height: 400, overflow: 'auto', p: 1, bgcolor: '#f9fafb',
+        border: '1px solid #e5e7eb', borderRadius: '4px' }}>
         {filtered.length === 0 && !isLoading && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
             No log entries yet. Trigger a poll to see activity.
@@ -171,7 +171,7 @@ export default function ActivityLog() {
           ))}
         </Stack>
         <div ref={bottomRef} />
-      </Paper>
+      </Box>
     </Box>
   )
 }

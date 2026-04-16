@@ -1,11 +1,8 @@
-import { useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import {
-  ThemeProvider, createTheme, CssBaseline, Box, Toolbar,
-} from '@mui/material'
-import Header from './components/Header/Header'
-import Sidebar, { SIDEBAR_WIDTH } from './components/Layout/Sidebar'
+import { ThemeProvider, createTheme, CssBaseline, Box } from '@mui/material'
+import { useState } from 'react'
+import Navbar from './components/Navbar/Navbar'
 import Login from './components/Login/Login'
 import DashboardPage from './pages/DashboardPage'
 import UsersPage from './pages/UsersPage'
@@ -18,103 +15,82 @@ const queryClient = new QueryClient({
 const theme = createTheme({
   palette: {
     mode: 'light',
-    primary: { main: '#2563eb', dark: '#1d4ed8', light: '#3b82f6', contrastText: '#fff' },
-    secondary: { main: '#0891b2', contrastText: '#fff' },
-    success: { main: '#059669' },
-    error: { main: '#dc2626' },
-    warning: { main: '#d97706' },
-    info: { main: '#6366f1' },
-    background: { default: '#f1f5f9', paper: '#ffffff' },
-    text: { primary: '#0f172a', secondary: '#64748b' },
-    divider: '#e2e8f0',
+    primary: { main: '#1a56db', dark: '#1341b0', light: '#3b76f6', contrastText: '#fff' },
+    secondary: { main: '#374151' },
+    success: { main: '#15803d' },
+    error: { main: '#b91c1c' },
+    warning: { main: '#b45309' },
+    info: { main: '#1a56db' },
+    background: { default: '#f9fafb', paper: '#ffffff' },
+    text: { primary: '#111827', secondary: '#6b7280' },
+    divider: '#e5e7eb',
   },
   typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica Neue", Arial, sans-serif',
-    h4: { fontWeight: 700, letterSpacing: '-0.02em' },
-    h5: { fontWeight: 700, letterSpacing: '-0.02em' },
-    h6: { fontWeight: 600, letterSpacing: '-0.01em' },
+    fontFamily: '"Inter", "Roboto", system-ui, sans-serif',
+    h5: { fontWeight: 600 },
+    h6: { fontWeight: 600 },
     subtitle1: { fontWeight: 600 },
     subtitle2: { fontWeight: 600 },
-    button: { fontWeight: 600, letterSpacing: 0 },
+    button: { fontWeight: 500, letterSpacing: 0, textTransform: 'none' },
   },
-  shape: { borderRadius: 10 },
-  shadows: [
-    'none',
-    '0 1px 2px 0 rgb(0 0 0 / 0.05)',
-    '0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08)',
-    '0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07)',
-    '0 10px 15px -3px rgb(0 0 0 / 0.07), 0 4px 6px -4px rgb(0 0 0 / 0.07)',
-    '0 20px 25px -5px rgb(0 0 0 / 0.07), 0 8px 10px -6px rgb(0 0 0 / 0.07)',
-    ...Array(19).fill('none'),
-  ] as any,
+  shape: { borderRadius: 6 },
+  // Flat — no shadows anywhere
+  shadows: Array(25).fill('none') as any,
   components: {
     MuiCssBaseline: {
       styleOverrides: {
+        'html, body, #root': { height: '100%' },
         '*': { boxSizing: 'border-box' },
-        'html, body': { overflowX: 'hidden', fontFeatureSettings: '"cv11", "ss01"' },
-        '#root': { minHeight: '100vh', display: 'flex', flexDirection: 'column' },
+        body: { overflowX: 'hidden' },
       },
     },
-    MuiCard: {
+    MuiAppBar: {
       styleOverrides: {
-        root: {
-          borderRadius: 12,
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.06)',
-        },
+        root: { boxShadow: 'none' },
       },
     },
     MuiPaper: {
       styleOverrides: {
-        root: { borderRadius: 12 },
-        outlined: { borderColor: '#e2e8f0' },
-        elevation1: { boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06)' },
+        root: { boxShadow: 'none', backgroundImage: 'none' },
+        outlined: { borderColor: '#e5e7eb' },
+        elevation1: { border: '1px solid #e5e7eb' },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: { boxShadow: 'none', border: '1px solid #e5e7eb' },
       },
     },
     MuiButton: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
-          textTransform: 'none',
-          fontWeight: 600,
-          fontSize: '0.875rem',
+          boxShadow: 'none',
+          borderRadius: 6,
+          fontWeight: 500,
+          '&:hover': { boxShadow: 'none' },
+          '&:active': { boxShadow: 'none' },
         },
-        contained: {
-          boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.1)',
-          '&:hover': { boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' },
-        },
-        outlined: { borderColor: '#cbd5e1' },
+        contained: { '&:hover': { boxShadow: 'none' } },
+        outlined: { borderColor: '#d1d5db' },
       },
     },
     MuiChip: {
-      styleOverrides: {
-        root: { borderRadius: 6, fontWeight: 500, fontSize: '0.75rem' },
-      },
+      styleOverrides: { root: { borderRadius: 4, fontWeight: 500, fontSize: '0.75rem' } },
     },
     MuiTab: {
       styleOverrides: {
-        root: {
-          textTransform: 'none',
-          fontWeight: 500,
-          fontSize: '0.875rem',
-          minHeight: 44,
-        },
+        root: { textTransform: 'none', fontWeight: 500, fontSize: '0.875rem', minHeight: 40 },
       },
     },
     MuiTabs: {
-      styleOverrides: {
-        indicator: { height: 2, borderRadius: 2 },
-      },
-    },
-    MuiTextField: {
-      defaultProps: { size: 'small' },
+      styleOverrides: { indicator: { height: 2 } },
     },
     MuiOutlinedInput: {
       styleOverrides: {
         root: {
-          borderRadius: 8,
-          '& .MuiOutlinedInput-notchedOutline': { borderColor: '#cbd5e1' },
-          '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#94a3b8' },
+          borderRadius: 6,
+          '& .MuiOutlinedInput-notchedOutline': { borderColor: '#d1d5db' },
+          '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#9ca3af' },
         },
       },
     },
@@ -125,82 +101,64 @@ const theme = createTheme({
             fontWeight: 600,
             fontSize: '0.75rem',
             textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: '#64748b',
-            backgroundColor: '#f8fafc',
-            borderBottom: '1px solid #e2e8f0',
+            letterSpacing: '0.04em',
+            color: '#6b7280',
+            backgroundColor: '#f9fafb',
+            borderBottom: '1px solid #e5e7eb',
           },
-        },
-      },
-    },
-    MuiTableRow: {
-      styleOverrides: {
-        root: {
-          '&:hover': { backgroundColor: '#f8fafc' },
-          '&:last-child td': { borderBottom: 0 },
         },
       },
     },
     MuiTableCell: {
       styleOverrides: {
-        root: { borderColor: '#f1f5f9', padding: '12px 16px' },
+        root: { borderColor: '#f3f4f6', padding: '10px 16px', fontSize: '0.875rem' },
       },
     },
-    MuiAlert: {
+    MuiTableRow: {
       styleOverrides: {
-        root: { borderRadius: 8, fontSize: '0.875rem' },
-      },
-    },
-    MuiDialog: {
-      styleOverrides: {
-        paper: { borderRadius: 16, boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.18)' },
-      },
-    },
-    MuiDialogTitle: {
-      styleOverrides: {
-        root: { fontWeight: 700, fontSize: '1.05rem', padding: '20px 24px 12px' },
+        root: {
+          '&:hover': { backgroundColor: '#fafafa' },
+          '&:last-child td': { border: 0 },
+        },
       },
     },
     MuiDivider: {
-      styleOverrides: { root: { borderColor: '#f1f5f9' } },
+      styleOverrides: { root: { borderColor: '#e5e7eb' } },
     },
+    MuiAlert: {
+      styleOverrides: { root: { borderRadius: 6, fontSize: '0.875rem' } },
+    },
+    MuiDialog: {
+      styleOverrides: {
+        paper: {
+          boxShadow: '0 20px 60px -10px rgba(0,0,0,0.2)',
+          borderRadius: 8,
+          border: '1px solid #e5e7eb',
+        },
+      },
+    },
+    MuiDialogTitle: {
+      styleOverrides: { root: { fontWeight: 600, fontSize: '1rem', padding: '18px 20px 10px' } },
+    },
+    MuiTextField: { defaultProps: { size: 'small' } },
+    MuiSelect: { defaultProps: { size: 'small' } },
   },
 })
 
 function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', display: 'flex', flexDirection: 'column' }}>
+      <Navbar />
       <Box
         component="main"
-        sx={{
-          flexGrow: 1,
-          minWidth: 0,          // prevent flex child from overflowing
-          overflow: 'hidden',   // no horizontal scroll
-          bgcolor: 'background.default',
-          display: 'flex',
-          flexDirection: 'column',
-          ml: sidebarOpen ? `${SIDEBAR_WIDTH}px` : 0,
-          transition: (t) =>
-            t.transitions.create('margin', {
-              easing: sidebarOpen ? t.transitions.easing.easeOut : t.transitions.easing.sharp,
-              duration: sidebarOpen ? t.transitions.duration.enteringScreen : t.transitions.duration.leavingScreen,
-            }),
-        }}
+        sx={{ flexGrow: 1, width: '100%', maxWidth: '100%', overflowX: 'hidden' }}
       >
-        <Header sidebarOpen={sidebarOpen} onSidebarToggle={() => setSidebarOpen(true)} />
-        <Toolbar sx={{ minHeight: '56px !important' }} />
-        <Box sx={{ pt: 2.5, pb: 3, px: 0, flexGrow: 1 }}>
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/users" element={<UsersPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Box>
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </Box>
     </Box>
   )

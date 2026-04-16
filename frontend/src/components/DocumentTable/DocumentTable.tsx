@@ -125,11 +125,10 @@ export default function DocumentTable() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>Documents</Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography sx={{ fontSize: '0.8rem', color: '#6b7280' }}>
           {data?.total ?? 0} total
         </Typography>
-        {isFetching && <CircularProgress size={16} />}
+        {isFetching && <CircularProgress size={14} />}
 
         <Box sx={{ flexGrow: 1 }} />
 
@@ -206,7 +205,14 @@ export default function DocumentTable() {
         pageSizeOptions={[10, 25, 50, 100]}
         autoHeight
         disableRowSelectionOnClick
-        sx={{ bgcolor: 'background.paper' }}
+        sx={{
+          bgcolor: 'background.paper',
+          border: 'none',
+          '& .MuiDataGrid-columnHeaders': { bgcolor: '#f9fafb', borderBottom: '1px solid #e5e7eb' },
+          '& .MuiDataGrid-cell': { borderColor: '#f3f4f6' },
+          '& .MuiDataGrid-row:hover': { bgcolor: '#fafafa' },
+          '& .MuiDataGrid-footerContainer': { borderTop: '1px solid #e5e7eb', bgcolor: '#fafafa' },
+        }}
       />
 
       {/* Document detail dialog */}

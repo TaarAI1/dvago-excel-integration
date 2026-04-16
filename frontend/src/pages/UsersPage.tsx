@@ -2,22 +2,17 @@ import { useState } from 'react'
 import {
   Box, Typography, Button, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, IconButton, Chip, Tooltip, Alert, CircularProgress,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Avatar,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
-import DeleteIcon from '@mui/icons-material/Delete'
-import KeyIcon from '@mui/icons-material/Key'
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutlined'
-import DoNotDisturbAltIcon from '@mui/icons-material/DoNotDisturbAlt'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
+import CheckIcon from '@mui/icons-material/Check'
+import BlockIcon from '@mui/icons-material/Block'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 
-interface User {
-  id: string
-  username: string
-  is_active: boolean
-  created_at: string
-}
+interface User { id: string; username: string; is_active: boolean; created_at: string }
 
 export default function UsersPage() {
   const qc = useQueryClient()
@@ -35,74 +30,41 @@ export default function UsersPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: { username: string; password: string }) => apiClient.post('/api/users', data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users'] })
-      setAddOpen(false); setNewUsername(''); setNewPassword(''); setError('')
-    },
-    onError: (e: any) => setError(e.response?.data?.detail || 'Failed to create user.'),
+    mutationFn: (d: { username: string; password: string }) => apiClient.post('/api/users', d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); setAddOpen(false); setNewUsername(''); setNewPassword(''); setError('') },
+    onError: (e: any) => setError(e.response?.data?.detail || 'Failed.'),
   })
-
-  const toggleActiveMutation = useMutation({
-    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
-      apiClient.put(`/api/users/${id}`, { is_active }),
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) => apiClient.put(`/api/users/${id}`, { is_active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
-    onError: (e: any) => alert(e.response?.data?.detail || 'Failed to update user.'),
   })
-
   const changePwdMutation = useMutation({
-    mutationFn: ({ id, new_password }: { id: string; new_password: string }) =>
-      apiClient.put(`/api/users/${id}/password`, { new_password }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users'] })
-      setPwdUser(null); setNewPwd(''); setError('')
-    },
-    onError: (e: any) => setError(e.response?.data?.detail || 'Failed to change password.'),
+    mutationFn: ({ id, new_password }: { id: string; new_password: string }) => apiClient.put(`/api/users/${id}/password`, { new_password }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); setPwdUser(null); setNewPwd(''); setError('') },
+    onError: (e: any) => setError(e.response?.data?.detail || 'Failed.'),
   })
-
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiClient.delete(`/api/users/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); setDeleteUser(null) },
-    onError: (e: any) => alert(e.response?.data?.detail || 'Failed to delete user.'),
   })
 
-  const initials = (name: string) => name.slice(0, 2).toUpperCase()
-  const avatarColor = (name: string) => {
-    const colors = ['#2563eb', '#7c3aed', '#059669', '#0891b2', '#d97706']
-    return colors[name.charCodeAt(0) % colors.length]
-  }
-
   return (
-    <Box sx={{ px: 2 }}>
-      <Box
-        sx={{
-          bgcolor: 'white',
-          border: '1px solid #e2e8f0',
-          borderRadius: '12px',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Table header bar */}
-        <Box sx={{
-          px: 2.5, py: 2,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          borderBottom: '1px solid #f1f5f9',
-        }}>
+    <Box sx={{ p: { xs: 2, sm: 3 } }}>
+      <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+
+        {/* Header */}
+        <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #f3f4f6',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Box>
-            <Typography sx={{ fontWeight: 700, fontSize: '0.95rem', color: '#0f172a' }}>
-              Users
-            </Typography>
-            <Typography sx={{ fontSize: '0.75rem', color: '#94a3b8', mt: 0.2 }}>
+            <Typography sx={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>Users</Typography>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
               {users.length} account{users.length !== 1 ? 's' : ''}
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={<AddIcon fontSize="small" />}
+          <Button variant="contained" size="small"
+            startIcon={<AddIcon sx={{ fontSize: 15 }} />}
             onClick={() => { setAddOpen(true); setError('') }}
-            sx={{ height: 34 }}
-          >
+            sx={{ height: 32, fontSize: '0.8rem' }}>
             Add User
           </Button>
         </Box>
@@ -111,7 +73,7 @@ export default function UsersPage() {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>User</TableCell>
+                <TableCell>Username</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Created</TableCell>
                 <TableCell align="right">Actions</TableCell>
@@ -121,89 +83,59 @@ export default function UsersPage() {
               {isLoading ? (
                 <TableRow>
                   <TableCell colSpan={4} align="center" sx={{ py: 5 }}>
-                    <CircularProgress size={24} />
+                    <CircularProgress size={22} />
                   </TableCell>
                 </TableRow>
               ) : users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ py: 5, color: 'text.secondary' }}>
-                    No users yet. Add one to get started.
+                  <TableCell colSpan={4} align="center" sx={{ py: 5, color: '#9ca3af' }}>
+                    No users found.
                   </TableCell>
                 </TableRow>
-              ) : users.map((user) => (
-                <TableRow key={user.id}>
+              ) : users.map((u) => (
+                <TableRow key={u.id}>
                   <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Avatar
-                        sx={{ width: 32, height: 32, fontSize: 12, fontWeight: 700,
-                          bgcolor: avatarColor(user.username) }}
-                      >
-                        {initials(user.username)}
-                      </Avatar>
-                      <Box>
-                        <Typography sx={{ fontWeight: 600, fontSize: '0.875rem', color: '#0f172a' }}>
-                          {user.username}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.72rem', color: '#94a3b8', fontFamily: 'monospace' }}>
-                          {user.id.slice(0, 8)}…
-                        </Typography>
-                      </Box>
-                    </Box>
+                    <Typography sx={{ fontWeight: 500, fontSize: '0.875rem' }}>{u.username}</Typography>
+                    <Typography sx={{ fontSize: '0.7rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+                      {u.id.slice(0, 8)}
+                    </Typography>
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={user.is_active ? 'Active' : 'Inactive'}
-                      size="small"
+                    <Chip label={u.is_active ? 'Active' : 'Inactive'} size="small"
                       sx={{
-                        fontSize: '0.72rem', fontWeight: 600, height: 22,
-                        bgcolor: user.is_active ? '#f0fdf4' : '#f8fafc',
-                        color: user.is_active ? '#059669' : '#94a3b8',
-                        border: '1px solid',
-                        borderColor: user.is_active ? '#bbf7d0' : '#e2e8f0',
-                      }}
-                    />
+                        height: 22, fontSize: '0.72rem', fontWeight: 500, borderRadius: '4px',
+                        bgcolor: u.is_active ? '#f0fdf4' : '#f9fafb',
+                        color: u.is_active ? '#15803d' : '#9ca3af',
+                        border: '1px solid', borderColor: u.is_active ? '#d1fae5' : '#e5e7eb',
+                      }} />
                   </TableCell>
-                  <TableCell sx={{ color: '#64748b', fontSize: '0.8rem' }}>
-                    {new Date(user.created_at).toLocaleDateString('en-GB', {
-                      day: '2-digit', month: 'short', year: 'numeric',
-                    })}
+                  <TableCell sx={{ color: '#6b7280' }}>
+                    {new Date(u.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                   </TableCell>
                   <TableCell align="right">
                     <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
-                      <Tooltip title={user.is_active ? 'Deactivate' : 'Activate'}>
-                        <IconButton
-                          size="small"
-                          onClick={() => toggleActiveMutation.mutate({ id: user.id, is_active: !user.is_active })}
-                          sx={{
-                            borderRadius: '8px', width: 30, height: 30,
-                            color: user.is_active ? '#059669' : '#94a3b8',
-                            '&:hover': { bgcolor: user.is_active ? '#f0fdf4' : '#f8fafc' },
-                          }}
-                        >
-                          {user.is_active
-                            ? <CheckCircleOutlineIcon sx={{ fontSize: 16 }} />
-                            : <DoNotDisturbAltIcon sx={{ fontSize: 16 }} />
-                          }
+                      <Tooltip title={u.is_active ? 'Deactivate' : 'Activate'}>
+                        <IconButton size="small"
+                          onClick={() => toggleMutation.mutate({ id: u.id, is_active: !u.is_active })}
+                          sx={{ borderRadius: '4px', width: 28, height: 28,
+                            color: u.is_active ? '#15803d' : '#9ca3af',
+                            '&:hover': { bgcolor: '#f9fafb' } }}>
+                          {u.is_active ? <CheckIcon sx={{ fontSize: 14 }} /> : <BlockIcon sx={{ fontSize: 14 }} />}
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Change Password">
-                        <IconButton
-                          size="small"
-                          onClick={() => { setPwdUser(user); setError('') }}
-                          sx={{ borderRadius: '8px', width: 30, height: 30, color: '#64748b',
-                            '&:hover': { bgcolor: '#f1f5f9', color: 'primary.main' } }}
-                        >
-                          <KeyIcon sx={{ fontSize: 16 }} />
+                        <IconButton size="small"
+                          onClick={() => { setPwdUser(u); setError('') }}
+                          sx={{ borderRadius: '4px', width: 28, height: 28, color: '#6b7280',
+                            '&:hover': { bgcolor: '#f9fafb', color: '#1a56db' } }}>
+                          <KeyOutlinedIcon sx={{ fontSize: 14 }} />
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Delete">
-                        <IconButton
-                          size="small"
-                          onClick={() => setDeleteUser(user)}
-                          sx={{ borderRadius: '8px', width: 30, height: 30, color: '#94a3b8',
-                            '&:hover': { bgcolor: '#fef2f2', color: 'error.main' } }}
-                        >
-                          <DeleteIcon sx={{ fontSize: 16 }} />
+                        <IconButton size="small" onClick={() => setDeleteUser(u)}
+                          sx={{ borderRadius: '4px', width: 28, height: 28, color: '#9ca3af',
+                            '&:hover': { bgcolor: '#fef2f2', color: '#b91c1c' } }}>
+                          <DeleteOutlineIcon sx={{ fontSize: 14 }} />
                         </IconButton>
                       </Tooltip>
                     </Box>
@@ -215,74 +147,62 @@ export default function UsersPage() {
         </TableContainer>
       </Box>
 
-      {/* Add User Dialog */}
+      {/* Add */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Add New User</DialogTitle>
-        <DialogContent sx={{ pt: '12px !important' }}>
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 0.5 }}>
+        <DialogTitle>Add User</DialogTitle>
+        <DialogContent sx={{ pt: '8px !important' }}>
+          {error && <Alert severity="error" sx={{ mb: 1.5, py: 0.5 }}>{error}</Alert>}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
             <TextField label="Username" fullWidth value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)} autoFocus />
             <TextField label="Password" type="password" fullWidth value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              helperText="Minimum 6 characters" />
+              onChange={(e) => setNewPassword(e.target.value)} helperText="Min 6 chars" />
           </Box>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
-          <Button onClick={() => setAddOpen(false)} variant="outlined" size="small">Cancel</Button>
-          <Button
-            variant="contained" size="small"
+        <DialogActions sx={{ px: 2.5, pb: 2 }}>
+          <Button onClick={() => setAddOpen(false)} size="small" variant="outlined">Cancel</Button>
+          <Button variant="contained" size="small"
             disabled={createMutation.isPending || !newUsername || !newPassword}
-            onClick={() => createMutation.mutate({ username: newUsername, password: newPassword })}
-          >
-            {createMutation.isPending ? 'Creating…' : 'Create User'}
+            onClick={() => createMutation.mutate({ username: newUsername, password: newPassword })}>
+            {createMutation.isPending ? 'Creating…' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Change Password Dialog */}
+      {/* Change password */}
       <Dialog open={!!pwdUser} onClose={() => setPwdUser(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Change Password</DialogTitle>
-        <DialogContent sx={{ pt: '12px !important' }}>
-          <Typography sx={{ fontSize: '0.85rem', color: 'text.secondary', mb: 2 }}>
-            Updating password for <strong>{pwdUser?.username}</strong>
+        <DialogContent sx={{ pt: '8px !important' }}>
+          <Typography sx={{ fontSize: '0.8rem', color: '#6b7280', mb: 1.5 }}>
+            For <strong>{pwdUser?.username}</strong>
           </Typography>
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {error && <Alert severity="error" sx={{ mb: 1.5, py: 0.5 }}>{error}</Alert>}
           <TextField label="New Password" type="password" fullWidth value={newPwd}
-            onChange={(e) => setNewPwd(e.target.value)} autoFocus
-            helperText="Minimum 6 characters" />
+            onChange={(e) => setNewPwd(e.target.value)} autoFocus helperText="Min 6 chars" />
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
-          <Button onClick={() => setPwdUser(null)} variant="outlined" size="small">Cancel</Button>
-          <Button
-            variant="contained" size="small"
+        <DialogActions sx={{ px: 2.5, pb: 2 }}>
+          <Button onClick={() => setPwdUser(null)} size="small" variant="outlined">Cancel</Button>
+          <Button variant="contained" size="small"
             disabled={changePwdMutation.isPending || !newPwd}
-            onClick={() => pwdUser && changePwdMutation.mutate({ id: pwdUser.id, new_password: newPwd })}
-          >
-            {changePwdMutation.isPending ? 'Saving…' : 'Save Password'}
+            onClick={() => pwdUser && changePwdMutation.mutate({ id: pwdUser.id, new_password: newPwd })}>
+            {changePwdMutation.isPending ? 'Saving…' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirmation */}
+      {/* Delete */}
       <Dialog open={!!deleteUser} onClose={() => setDeleteUser(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Delete User</DialogTitle>
         <DialogContent sx={{ pt: '8px !important' }}>
-          <Typography sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
-            Are you sure you want to delete{' '}
-            <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-              {deleteUser?.username}
-            </Box>
-            ? This cannot be undone.
+          <Typography sx={{ fontSize: '0.875rem', color: '#374151' }}>
+            Delete <strong>{deleteUser?.username}</strong>? This cannot be undone.
           </Typography>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
-          <Button onClick={() => setDeleteUser(null)} variant="outlined" size="small">Cancel</Button>
-          <Button
-            variant="contained" color="error" size="small"
+        <DialogActions sx={{ px: 2.5, pb: 2 }}>
+          <Button onClick={() => setDeleteUser(null)} size="small" variant="outlined">Cancel</Button>
+          <Button variant="contained" color="error" size="small"
             disabled={deleteMutation.isPending}
-            onClick={() => deleteUser && deleteMutation.mutate(deleteUser.id)}
-          >
+            onClick={() => deleteUser && deleteMutation.mutate(deleteUser.id)}>
             {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
           </Button>
         </DialogActions>
