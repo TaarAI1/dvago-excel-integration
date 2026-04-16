@@ -3,7 +3,7 @@ import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
   TextField, Select, MenuItem, FormControl, InputLabel,
-  IconButton, Tooltip, Button, Dialog, DialogTitle,
+  IconButton, Tooltip, Button, Dialog,
   DialogContent, DialogActions,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -108,7 +108,7 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth
-      PaperProps={{ sx: { borderRadius: '8px', overflow: 'hidden' } }}>
+      slotProps={{ paper: { sx: { borderRadius: '8px', overflow: 'hidden' } } }}>
 
       {/* ── Header strip ── */}
       <Box sx={{ bgcolor: doc.has_error ? '#fef2f2' : doc.posted ? '#f0fdf4' : '#fffbeb',
