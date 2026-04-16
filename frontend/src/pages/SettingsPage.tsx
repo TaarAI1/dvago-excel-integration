@@ -211,7 +211,7 @@ export default function SettingsPage() {
   )
 
   return (
-    <Box>
+    <Box sx={{ px: 2 }}>
       <Typography variant="h5" sx={{ fontWeight: 700, mb: 3 }}>Configuration</Typography>
 
       {saveMsg && <Alert severity="success" sx={{ mb: 2 }}>{saveMsg}</Alert>}

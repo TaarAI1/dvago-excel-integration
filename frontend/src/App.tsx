@@ -65,7 +65,7 @@ function AppLayout() {
         />
         {/* Spacer for fixed AppBar */}
         <Toolbar sx={{ minHeight: 56 }} />
-        <Box sx={{ p: 2, flexGrow: 1 }}>
+        <Box sx={{ pt: 2, pb: 2, px: 0, flexGrow: 1 }}>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/users" element={<UsersPage />} />
