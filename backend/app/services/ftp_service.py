@@ -41,6 +41,19 @@ def download_csv_file(filename: str, host: str, port: int, user: str, password: 
     return tmp_path
 
 
+def list_all_files(host: str, port: int, user: str, password: str, path: str) -> list[str]:
+    """Return all .csv and .xlsx filenames in the given FTP path."""
+    _EXTS = (".csv", ".xlsx")
+    with ftplib.FTP() as ftp:
+        ftp.connect(host, port, timeout=30)
+        ftp.login(user, password)
+        ftp.cwd(path)
+        all_files = ftp.nlst()
+        filenames = [f for f in all_files if f.lower().endswith(_EXTS)]
+    logger.debug(f"FTP listed {len(filenames)} importable files in {path}")
+    return filenames
+
+
 def list_excel_files(host: str, port: int, user: str, password: str, path: str) -> list[str]:
     """Connect to FTP and return list of .xlsx filenames in the given path."""
     with ftplib.FTP() as ftp:

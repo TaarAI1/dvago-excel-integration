@@ -345,14 +345,6 @@ export default function SettingsPage() {
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_password', 'Password', true)}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_import_path', 'Import Path')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_export_path', 'Export Path')}</Grid>
-              <Grid size={{ xs: 12 }}>
-                <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: '#374151',
-                  mt: 0.5, mb: 1, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Item Master Module
-                </Typography>
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('item_master_ftp_path', 'Item Master Source Path')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('item_master_processed_path', 'Item Master Processed Path')}</Grid>
             </Grid>
             <TestButton label="Test FTP" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 2.5 }} />

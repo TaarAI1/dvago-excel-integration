@@ -24,8 +24,6 @@ SETTING_DEFINITIONS = [
     ("ftp_password",              "ftp",          "FTP Password",                "",             True),
     ("ftp_import_path",           "ftp",          "FTP Import Path",             "/",            False),
     ("ftp_export_path",           "ftp",          "FTP Export Path",             "/exports",     False),
-    ("item_master_ftp_path",      "ftp",          "Item Master Source Path",     "/item_master", False),
-    ("item_master_processed_path","ftp",          "Item Master Processed Path",  "/item_master/processed", False),
     # RetailPro
     ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "http://your-retailpro-server", False),
     ("retailpro_username",        "retailpro",    "RetailPro Username",          "",             False),
