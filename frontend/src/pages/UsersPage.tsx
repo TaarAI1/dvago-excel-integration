@@ -5,7 +5,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import CheckIcon from '@mui/icons-material/Check'
 import BlockIcon from '@mui/icons-material/Block'

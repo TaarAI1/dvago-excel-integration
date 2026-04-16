@@ -137,8 +137,10 @@ export default function Navbar() {
             onClose={() => setAnchorEl(null)}
             transformOrigin={{ horizontal: 'right', vertical: 'top' }}
             anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
-            PaperProps={{
-              sx: { mt: 0.5, minWidth: 140, border: '1px solid #e5e7eb', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
+            slotProps={{
+              paper: {
+                sx: { mt: 0.5, minWidth: 140, border: '1px solid #e5e7eb', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
+              },
             }}
           >
             <MenuItem dense onClick={handleLogout} sx={{ fontSize: '0.8rem', color: '#b91c1c', gap: 1 }}>
