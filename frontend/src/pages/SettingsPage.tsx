@@ -390,7 +390,7 @@ export default function SettingsPage() {
                     fullWidth
                     multiline
                     rows={4}
-                    placeholder="SELECT * FROM your_table WHERE rownum <= 100"
+                    placeholder="SELECT * FROM your_table"
                     value={queryText}
                     onChange={(e) => setQueryText(e.target.value)}
                     sx={{
@@ -430,7 +430,7 @@ export default function SettingsPage() {
                           <CheckCircleOutlinedIcon sx={{ fontSize: 14, color: '#15803d' }} />
                           <Typography sx={{ fontSize: '0.75rem', color: '#15803d', fontWeight: 500 }}>
                             {queryResult.row_count} row{queryResult.row_count !== 1 ? 's' : ''} returned
-                            {queryResult.row_count === 500 && ' (limited to 500)'}
+                            {' (limited to 10)'}
                           </Typography>
                         </Box>
                         <DataGrid

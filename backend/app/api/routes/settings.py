@@ -112,8 +112,9 @@ async def run_oracle_query(body: OracleQueryRequest, _: str = Depends(get_curren
     if first_word not in ("SELECT", "WITH"):
         raise HTTPException(status_code=400, detail="Only SELECT / WITH queries are allowed.")
     try:
-        df = await run_query(body.host, body.port, body.service_name, body.user, body.password, body.sql)
-        df = df.head(500)
+        # Wrap the user's query to hard-limit to 10 rows at the DB level
+        limited_sql = f"SELECT * FROM ({body.sql}) WHERE ROWNUM <= 10"
+        df = await run_query(body.host, body.port, body.service_name, body.user, body.password, limited_sql)
         columns = df.columns
         rows = [list(row) for row in df.iter_rows()]
         return {"ok": True, "columns": columns, "rows": rows, "row_count": len(rows)}
