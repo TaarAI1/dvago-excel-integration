@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Tabs, Tab, TextField, Button, Alert,
-  CircularProgress, InputAdornment, IconButton, Grid, Divider,
+  CircularProgress, InputAdornment, IconButton, Grid, Divider, Collapse,
 } from '@mui/material'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 import SaveIcon from '@mui/icons-material/Save'
 import WifiIcon from '@mui/icons-material/Wifi'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import TableChartOutlinedIcon from '@mui/icons-material/TableChartOutlined'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
+import { DataGrid } from '@mui/x-data-grid'
+import type { GridColDef } from '@mui/x-data-grid'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 
@@ -77,6 +81,23 @@ function TestButton({ label, onClick, result }:
   )
 }
 
+// Inline (no top-margin) version used when paired with other buttons
+function OracleTestButton({ onClick, result }:
+  { onClick: () => Promise<void>; result: { ok: boolean; error: string | null } | null }) {
+  const [loading, setLoading] = useState(false)
+  const handle = async () => { setLoading(true); await onClick(); setLoading(false) }
+  return (
+    <Box>
+      <Button variant="outlined" size="small"
+        startIcon={loading ? <CircularProgress size={12} /> : <WifiIcon sx={{ fontSize: 15 }} />}
+        onClick={handle} disabled={loading} sx={{ height: 32, fontSize: '0.8rem' }}>
+        Test Connection
+      </Button>
+      <TestResult result={result} />
+    </Box>
+  )
+}
+
 const TABS = ['FTP', 'Oracle DB', 'RetailPro API', 'Scheduler', 'Sales Export']
 
 export default function SettingsPage() {
@@ -88,6 +109,14 @@ export default function SettingsPage() {
   const [ftpResult, setFtpResult] = useState<{ ok: boolean; error: string | null } | null>(null)
   const [oracleResult, setOracleResult] = useState<{ ok: boolean; error: string | null } | null>(null)
   const [retailproResult, setRetailproResult] = useState<{ ok: boolean; error: string | null } | null>(null)
+
+  // Oracle query panel
+  const [queryOpen, setQueryOpen] = useState(false)
+  const [queryText, setQueryText] = useState('')
+  const [queryRunning, setQueryRunning] = useState(false)
+  const [queryResult, setQueryResult] = useState<{
+    ok: boolean; columns: string[]; rows: unknown[][]; row_count: number; error?: string
+  } | null>(null)
 
   const { data: allSettings, isLoading } = useQuery<AllSettings>({
     queryKey: ['settings-raw'],
@@ -131,6 +160,27 @@ export default function SettingsPage() {
   const testRetailPro = async () => {
     try { const r = await apiClient.post('/api/settings/test/retailpro', { base_url: g('retailpro_base_url'), api_key: g('retailpro_api_key') }); setRetailproResult(r.data) }
     catch { setRetailproResult({ ok: false, error: 'Request failed' }) }
+  }
+
+  const runOracleQuery = async () => {
+    if (!queryText.trim()) return
+    setQueryRunning(true)
+    setQueryResult(null)
+    try {
+      const r = await apiClient.post('/api/settings/oracle/query', {
+        host: g('oracle_host'),
+        port: parseInt(g('oracle_port') || '1521'),
+        user: g('oracle_username'),
+        password: g('oracle_password'),
+        service_name: g('oracle_service_name'),
+        sql: queryText,
+      })
+      setQueryResult(r.data)
+    } catch (e: any) {
+      setQueryResult({ ok: false, columns: [], rows: [], row_count: 0, error: e.response?.data?.detail || 'Request failed' })
+    } finally {
+      setQueryRunning(false)
+    }
   }
 
   const F = (key: string, label: string, sensitive = false) => (
@@ -190,7 +240,119 @@ export default function SettingsPage() {
               <Grid size={{ xs: 12, sm: 6 }}>{F('oracle_username', 'Username')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('oracle_password', 'Password', true)}</Grid>
             </Grid>
-            <TestButton label="Test Oracle" onClick={testOracle} result={oracleResult} />
+
+            {/* Action buttons row */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2, flexWrap: 'wrap' }}>
+              {/* Test connection */}
+              <OracleTestButton onClick={testOracle} result={oracleResult} />
+
+              {/* Run Query toggle */}
+              <Button
+                variant={queryOpen ? 'contained' : 'outlined'}
+                size="small"
+                startIcon={<TableChartOutlinedIcon sx={{ fontSize: 15 }} />}
+                onClick={() => { setQueryOpen(!queryOpen); setQueryResult(null) }}
+                sx={{ height: 32, fontSize: '0.8rem' }}
+              >
+                Run a Query
+              </Button>
+            </Box>
+
+            {/* Collapsible query panel */}
+            <Collapse in={queryOpen} unmountOnExit>
+              <Box sx={{
+                mt: 2, border: '1px solid #e5e7eb', borderRadius: '6px',
+                overflow: 'hidden',
+              }}>
+                {/* Query editor */}
+                <Box sx={{ p: 1.5, borderBottom: '1px solid #f3f4f6', bgcolor: '#fafafa',
+                  display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={4}
+                    placeholder="SELECT * FROM your_table WHERE rownum <= 100"
+                    value={queryText}
+                    onChange={(e) => setQueryText(e.target.value)}
+                    sx={{
+                      '& .MuiOutlinedInput-root': { fontFamily: 'monospace', fontSize: '0.82rem' },
+                    }}
+                  />
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={queryRunning
+                      ? <CircularProgress size={12} color="inherit" />
+                      : <PlayArrowIcon sx={{ fontSize: 15 }} />}
+                    onClick={runOracleQuery}
+                    disabled={queryRunning || !queryText.trim()}
+                    sx={{ height: 36, fontSize: '0.8rem', flexShrink: 0, mt: 0.5 }}
+                  >
+                    {queryRunning ? 'Running…' : 'Run'}
+                  </Button>
+                </Box>
+
+                {/* Results area */}
+                {queryResult && (
+                  <Box>
+                    {!queryResult.ok ? (
+                      <Box sx={{ p: 1.5, display: 'flex', alignItems: 'flex-start', gap: 1,
+                        bgcolor: '#fef2f2' }}>
+                        <ErrorOutlinedIcon sx={{ fontSize: 15, color: '#b91c1c', mt: '2px', flexShrink: 0 }} />
+                        <Typography sx={{ fontSize: '0.78rem', color: '#7f1d1d',
+                          wordBreak: 'break-word', fontFamily: 'monospace', lineHeight: 1.5 }}>
+                          {queryResult.error}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Box>
+                        <Box sx={{ px: 1.5, py: 1, bgcolor: '#f0fdf4', borderBottom: '1px solid #d1fae5',
+                          display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <CheckCircleOutlinedIcon sx={{ fontSize: 14, color: '#15803d' }} />
+                          <Typography sx={{ fontSize: '0.75rem', color: '#15803d', fontWeight: 500 }}>
+                            {queryResult.row_count} row{queryResult.row_count !== 1 ? 's' : ''} returned
+                            {queryResult.row_count === 500 && ' (limited to 500)'}
+                          </Typography>
+                        </Box>
+                        <DataGrid
+                          rows={queryResult.rows.map((row, i) => ({
+                            id: i,
+                            ...Object.fromEntries(queryResult.columns.map((col, ci) => [col, row[ci]])),
+                          }))}
+                          columns={queryResult.columns.map((col): GridColDef => ({
+                            field: col,
+                            headerName: col,
+                            flex: 1,
+                            minWidth: 120,
+                            sortable: true,
+                          }))}
+                          autoHeight
+                          disableRowSelectionOnClick
+                          pageSizeOptions={[25, 50, 100]}
+                          initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
+                          sx={{
+                            border: 'none',
+                            '& .MuiDataGrid-columnHeaders': { bgcolor: '#f9fafb', borderBottom: '1px solid #e5e7eb' },
+                            '& .MuiDataGrid-cell': { fontSize: '0.8rem', borderColor: '#f3f4f6' },
+                            '& .MuiDataGrid-footerContainer': { borderTop: '1px solid #e5e7eb', bgcolor: '#fafafa' },
+                          }}
+                        />
+                      </Box>
+                    )}
+                  </Box>
+                )}
+
+                {/* Empty state before first run */}
+                {!queryResult && !queryRunning && (
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography sx={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+                      Write a SELECT query above and click Run to see results.
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            </Collapse>
+
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="oracle" />
           </TabPanel>

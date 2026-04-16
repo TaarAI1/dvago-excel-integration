@@ -86,6 +86,35 @@ async def test_oracle(body: TestConnectionRequest, _: str = Depends(get_current_
     return result
 
 
+class OracleQueryRequest(BaseModel):
+    host: str = ""
+    port: int = 1521
+    user: str = ""
+    password: str = ""
+    service_name: str = ""
+    sql: str = ""
+
+
+@router.post("/oracle/query")
+async def run_oracle_query(body: OracleQueryRequest, _: str = Depends(get_current_user)):
+    """Execute a read-only SQL query against Oracle and return columns + rows (max 500 rows)."""
+    from app.services.oracle_service import run_query
+    if not body.sql.strip():
+        raise HTTPException(status_code=400, detail="SQL query is required.")
+    # Safety: only allow SELECT statements
+    first_word = body.sql.strip().split()[0].upper()
+    if first_word not in ("SELECT", "WITH"):
+        raise HTTPException(status_code=400, detail="Only SELECT / WITH queries are allowed.")
+    try:
+        df = await run_query(body.host, body.port, body.service_name, body.user, body.password, body.sql)
+        df = df.head(500)
+        columns = df.columns
+        rows = [list(row) for row in df.iter_rows()]
+        return {"ok": True, "columns": columns, "rows": rows, "row_count": len(rows)}
+    except Exception as exc:
+        return {"ok": False, "columns": [], "rows": [], "row_count": 0, "error": str(exc)}
+
+
 @router.post("/test/retailpro")
 async def test_retailpro(body: TestConnectionRequest, _: str = Depends(get_current_user)):
     """Test RetailPro API reachability with provided URL and key."""
