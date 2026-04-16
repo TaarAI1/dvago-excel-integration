@@ -1,9 +1,9 @@
-import { Box, Card, CardContent, Typography, Skeleton, Chip } from '@mui/material'
-import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import ErrorIcon from '@mui/icons-material/Error'
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty'
-import StorageIcon from '@mui/icons-material/Storage'
-import SpeedIcon from '@mui/icons-material/Speed'
+import { Box, Typography, Skeleton } from '@mui/material'
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
+import HourglassTopIcon from '@mui/icons-material/HourglassTop'
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined'
+import SpeedOutlinedIcon from '@mui/icons-material/SpeedOutlined'
 import { useSSE } from '../../hooks/useSSE'
 
 interface DashboardStats {
@@ -24,100 +24,137 @@ interface StatCardProps {
   value: string | number
   subtitle?: string
   icon: React.ReactNode
-  color: string
+  accent: string
+  bg: string
   loading?: boolean
 }
 
-function StatCard({ title, value, subtitle, icon, color, loading }: StatCardProps) {
+function StatCard({ title, value, subtitle, icon, accent, bg, loading }: StatCardProps) {
   return (
-    <Card elevation={2} sx={{ flex: '1 1 180px', minWidth: 160 }}>
-      <CardContent sx={{ pb: '12px !important' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Box sx={{ color, display: 'flex' }}>{icon}</Box>
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+    <Box
+      sx={{
+        flex: '1 1 170px',
+        minWidth: 155,
+        bgcolor: 'white',
+        borderRadius: '12px',
+        border: '1px solid #e2e8f0',
+        overflow: 'hidden',
+        boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.05)',
+        transition: 'box-shadow 0.2s, transform 0.2s',
+        '&:hover': {
+          boxShadow: '0 4px 12px 0 rgb(0 0 0 / 0.08)',
+          transform: 'translateY(-1px)',
+        },
+      }}
+    >
+      {/* Accent bar */}
+      <Box sx={{ height: 3, bgcolor: accent, borderRadius: '12px 12px 0 0' }} />
+
+      <Box sx={{ p: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+          <Typography
+            sx={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase',
+              letterSpacing: '0.07em', color: '#64748b' }}
+          >
             {title}
           </Typography>
+          <Box
+            sx={{
+              width: 32, height: 32, borderRadius: '8px',
+              bgcolor: bg,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: accent,
+            }}
+          >
+            {icon}
+          </Box>
         </Box>
+
         {loading ? (
-          <Skeleton variant="text" width={60} height={36} />
+          <Skeleton variant="text" width={56} height={40} />
         ) : (
-          <Typography variant="h4" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
+          <Typography sx={{ fontSize: '1.8rem', fontWeight: 700, lineHeight: 1, color: '#0f172a', mb: 0.5 }}>
             {value}
           </Typography>
         )}
+
         {subtitle && (
-          <Typography variant="caption" color="text.secondary">{subtitle}</Typography>
+          <Typography sx={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+            {subtitle}
+          </Typography>
         )}
-      </CardContent>
-    </Card>
+      </Box>
+    </Box>
   )
 }
 
 export default function StatsCards() {
   const { data: stats, error } = useSSE<DashboardStats>('/api/stream/dashboard')
-
   const loading = !stats
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-        <Typography variant="subtitle2" color="text.secondary">Live Statistics</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+        <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase',
+          letterSpacing: '0.07em', color: '#64748b' }}>
+          Live Statistics
+        </Typography>
         {stats && (
-          <Chip
-            label={`Updated ${new Date(stats.ts).toLocaleTimeString()}`}
-            size="small"
-            variant="outlined"
-            sx={{ fontSize: 11 }}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#10b981',
+              animation: 'pulse 2s infinite',
+              '@keyframes pulse': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.4 } },
+            }} />
+            <Typography sx={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+              {new Date(stats.ts).toLocaleTimeString()}
+            </Typography>
+          </Box>
         )}
-        {error && <Chip label={error} size="small" color="warning" sx={{ fontSize: 11 }} />}
+        {error && (
+          <Typography sx={{ fontSize: '0.72rem', color: 'warning.main' }}>{error}</Typography>
+        )}
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
         <StatCard
           title="Total Documents"
           value={stats?.total ?? 0}
           subtitle={`${stats?.total_today ?? 0} today`}
-          icon={<StorageIcon fontSize="small" />}
-          color="#1976d2"
-          loading={loading}
+          icon={<DescriptionOutlinedIcon sx={{ fontSize: 16 }} />}
+          accent="#2563eb" bg="#eff6ff" loading={loading}
         />
         <StatCard
           title="Posted"
           value={stats?.posted ?? 0}
           subtitle={`${stats?.post_rate_pct ?? 0}% success rate`}
-          icon={<CheckCircleIcon fontSize="small" />}
-          color="#2e7d32"
-          loading={loading}
+          icon={<CheckCircleOutlineIcon sx={{ fontSize: 16 }} />}
+          accent="#059669" bg="#f0fdf4" loading={loading}
         />
         <StatCard
           title="Errors"
           value={stats?.errors ?? 0}
           subtitle="Require attention"
-          icon={<ErrorIcon fontSize="small" />}
-          color="#d32f2f"
-          loading={loading}
+          icon={<ErrorOutlineIcon sx={{ fontSize: 16 }} />}
+          accent="#dc2626" bg="#fef2f2" loading={loading}
         />
         <StatCard
           title="Pending"
           value={stats?.pending ?? 0}
           subtitle="Awaiting API call"
-          icon={<HourglassEmptyIcon fontSize="small" />}
-          color="#f57c00"
-          loading={loading}
+          icon={<HourglassTopIcon sx={{ fontSize: 16 }} />}
+          accent="#d97706" bg="#fffbeb" loading={loading}
         />
         <StatCard
           title="Avg API Time"
           value={stats?.avg_api_response_ms != null ? `${stats.avg_api_response_ms}ms` : '—'}
           subtitle="Per document"
-          icon={<SpeedIcon fontSize="small" />}
-          color="#7b1fa2"
-          loading={loading}
+          icon={<SpeedOutlinedIcon sx={{ fontSize: 16 }} />}
+          accent="#7c3aed" bg="#f5f3ff" loading={loading}
         />
       </Box>
 
       {stats?.last_poll_time && (
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+        <Typography sx={{ fontSize: '0.72rem', color: '#94a3b8', mt: 1.5 }}>
           Last successful poll: {new Date(stats.last_poll_time).toLocaleString()}
         </Typography>
       )}
