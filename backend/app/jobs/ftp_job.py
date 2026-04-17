@@ -7,21 +7,24 @@ from app.db.settings_store import get_setting
 from app.models.activity_log import write_log
 from app.models.system_config import SystemConfig
 from app.services.ftp_service import (
-    list_excel_files,
+    list_all_files,
     download_excel_file,
     move_ftp_file_to_processed,
 )
 
 logger = logging.getLogger(__name__)
 
+_IM_EXTS = (".xlsx", ".csv")
+
 
 async def _poll_item_master(host: str, port: int, user: str, password: str) -> tuple[int, int]:
     """
-    Poll the Item Master import path and process every .xlsx file found.
+    Poll the Item Master import path and process every .xlsx and .csv file found.
 
-    - No filename keyword filtering: any .xlsx in the path is treated as item master data.
-    - No seen-file deduplication: every file present on each poll is processed, so
-      uploading a file with the same name as a previous batch will always be picked up.
+    - Accepts both Excel (.xlsx) and CSV (.csv) — routed by file extension.
+    - No filename keyword filtering: any supported file in the path is processed.
+    - No seen-file deduplication: files are always picked up, so uploading a file
+      with the same name as a previous batch will always be reprocessed.
     - After processing, the file is moved to {import_path}/processed/ with a timestamp
       suffix so the source folder stays clean for the next upload.
 
@@ -31,16 +34,19 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
     processed_path = import_path.rstrip("/") + "/processed"
 
     try:
-        all_files = list_excel_files(host, port, user, password, import_path)
+        all_files = list_all_files(host, port, user, password, import_path)
     except Exception as exc:
         logger.error(f"[Item Master] FTP listing failed for path '{import_path}': {exc}")
         return 0, 0
 
-    # Exclude anything already sitting inside a processed sub-folder
-    all_files = [f for f in all_files if "/processed" not in f.lower()]
+    # Keep only supported extensions; exclude anything inside a processed sub-folder
+    all_files = [
+        f for f in all_files
+        if f.lower().endswith(_IM_EXTS) and "processed" not in f.lower()
+    ]
 
     if not all_files:
-        logger.info("[Item Master] No .xlsx files found in import path.")
+        logger.info("[Item Master] No .xlsx or .csv files found in import path.")
         return 0, 0
 
     files_processed = 0
@@ -57,8 +63,12 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
             continue
 
         try:
-            from app.services.item_master_service import process_excel_batch
-            result = await process_excel_batch(file_bytes, source_file=filename)
+            from app.services.item_master_service import process_excel_batch, process_csv_batch
+            if filename.lower().endswith(".csv"):
+                result = await process_csv_batch(file_bytes, source_file=filename)
+            else:
+                result = await process_excel_batch(file_bytes, source_file=filename)
+
             im_processed += result.get("total", 0)
             summary = (
                 f"Item Master {filename}: "

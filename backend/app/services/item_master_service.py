@@ -521,23 +521,52 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
             session.add(doc)
 
 
-# ── Batch entry point ───────────────────────────────────────────────────────────
+# ── CSV parsing ─────────────────────────────────────────────────────────────────
 
-async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master_import.xlsx") -> dict:
+def parse_csv_item_master(file_bytes: bytes) -> list[dict]:
     """
-    Full pipeline for an uploaded Excel file:
-      parse → auth (once) → per-row processing with shared caches.
+    Parse CSV bytes into item master row dicts — same format as parse_excel().
+    Column headers are normalised to uppercase + stripped.
+    Rows without a UPC value are skipped.
+    Handles UTF-8 with or without BOM, and falls back to latin-1.
+    """
+    import csv as _csv
+    import io as _io
 
-    Returns a summary dict with per-row results.
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = file_bytes.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise ValueError("Could not decode CSV file (tried utf-8, latin-1).")
+
+    reader = _csv.DictReader(_io.StringIO(text))
+    rows_out: list[dict] = []
+    for row in reader:
+        normalised = {k.strip().upper(): v for k, v in row.items() if k}
+        upc = str(normalised.get("UPC", "")).strip()
+        if not upc:
+            continue
+        normalised["UPC"] = upc
+        rows_out.append(normalised)
+    return rows_out
+
+
+# ── Shared batch runner ──────────────────────────────────────────────────────────
+
+async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
+    """
+    Core pipeline shared by Excel and CSV paths:
+      auth (once) → per-row processing with shared caches → persist each row.
     """
     from app.services.retailpro_auth import get_auth_session
     from app.db.settings_store import get_setting
 
-    rows = parse_excel(file_bytes)
     if not rows:
         return {"ok": False, "error": "No data rows found (all rows missing UPC).", "results": []}
 
-    # Oracle credentials
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
         "port":         int((await get_setting("oracle_port"))     or "1521"),
@@ -547,9 +576,8 @@ async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master
     }
 
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()          # single auth call per batch
+    auth_session = await get_auth_session()
 
-    # Shared lookup caches — dedup Oracle queries and DCS/Vendor creates
     dcs_cache:  dict = {}
     vend_cache: dict = {}
     tax_cache:  dict = {}
@@ -570,7 +598,6 @@ async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master
                 sbs_cache=sbs_cache,
             )
             results.append(row_result)
-            # Persist to documents table immediately after each row
             try:
                 await _persist_result(row, row_result, source_file)
             except Exception as db_exc:
@@ -594,3 +621,17 @@ async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master
         "errors":  errors,
         "results": results,
     }
+
+
+# ── Batch entry points ───────────────────────────────────────────────────────────
+
+async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master_import.xlsx") -> dict:
+    """Parse an Excel (.xlsx) file and run the full item master pipeline."""
+    rows = parse_excel(file_bytes)
+    return await _run_rows_batch(rows, source_file)
+
+
+async def process_csv_batch(file_bytes: bytes, source_file: str = "item_master_import.csv") -> dict:
+    """Parse a CSV file and run the full item master pipeline."""
+    rows = parse_csv_item_master(file_bytes)
+    return await _run_rows_batch(rows, source_file)
