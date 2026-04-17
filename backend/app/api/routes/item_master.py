@@ -75,10 +75,15 @@ async def import_excel(
     Returns a summary with per-row results.
     """
     from app.services.item_master_service import process_excel_batch
+    from app.core.timezone import now_pkt
 
     raw = await file.read()
+    # Unique batch key: filename + timestamp so uploading the same file twice
+    # always produces separate, distinct batches.
+    base_name = file.filename or "upload.xlsx"
+    batch_key = f"{base_name}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
     try:
-        result = await process_excel_batch(raw, source_file=file.filename or "upload.xlsx")
+        result = await process_excel_batch(raw, source_file=batch_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

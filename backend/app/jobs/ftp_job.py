@@ -64,10 +64,13 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
 
         try:
             from app.services.item_master_service import process_excel_batch, process_csv_batch
+            # Unique batch key: filename + timestamp so re-uploads of the same
+            # filename always produce a separate, distinct batch.
+            batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
             if filename.lower().endswith(".csv"):
-                result = await process_csv_batch(file_bytes, source_file=filename)
+                result = await process_csv_batch(file_bytes, source_file=batch_key)
             else:
-                result = await process_excel_batch(file_bytes, source_file=filename)
+                result = await process_excel_batch(file_bytes, source_file=batch_key)
 
             im_processed += result.get("total", 0)
             summary = (

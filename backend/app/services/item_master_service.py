@@ -327,11 +327,28 @@ async def _taxcodesid(tax_code: str, tax_cache: dict, oc: dict) -> Optional[str]
 # ── Payload builder ─────────────────────────────────────────────────────────────
 
 def _to_json(v: Any) -> Any:
+    import re as _re
     from datetime import datetime as _dt
     if v is None:
         return None
     if isinstance(v, _dt):
         return v.isoformat()
+    # Float whole-numbers (e.g. 1e12 read from Excel) → "1000000000000"
+    if isinstance(v, float):
+        if v == int(v):
+            return str(int(v))
+        return v
+    # String scientific-notation (e.g. "1E+12") → "1000000000000"
+    if isinstance(v, str):
+        stripped = v.strip()
+        if _re.match(r'^-?\d+\.?\d*[eE][+\-]?\d+$', stripped):
+            try:
+                num = float(stripped)
+                if num == int(num):
+                    return str(int(num))
+                return str(num)
+            except (ValueError, OverflowError):
+                pass
     return v
 
 
@@ -361,9 +378,9 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
             except (ValueError, TypeError):
                 payload["rowversion"] = rv
 
-    # Map remaining Excel columns → JSON fields
+    # Map remaining Excel columns → JSON fields (skip None and empty strings)
     for col, json_key in MAIN_FIELD_MAP.items():
-        if col in row and row[col] is not None and json_key not in payload:
+        if col in row and row[col] is not None and str(row[col]).strip() != "" and json_key not in payload:
             payload[json_key] = _to_json(row[col])
 
     # Inject computed SIDs (overwrite whatever came from Excel)
@@ -381,7 +398,7 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
         extend["invnsbsitemsid"] = None
 
     for col, json_key in INVNEXTEND_MAP.items():
-        if col in row and row[col] is not None:
+        if col in row and row[col] is not None and str(row[col]).strip() != "":
             extend[json_key] = _to_json(row[col])
 
     payload["invnextend"] = [extend]
