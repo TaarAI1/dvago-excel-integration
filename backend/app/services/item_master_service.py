@@ -324,6 +324,29 @@ async def _taxcodesid(tax_code: str, tax_cache: dict, oc: dict) -> Optional[str]
     return tax_cache[tax_code]
 
 
+async def _pref_reason_sid(cache: dict, oc: dict) -> Optional[str]:
+    """Return the SID for the 'MANUALLY' preferred reason — cached for the whole batch."""
+    key = "__MANUALLY__"
+    if key not in cache:
+        cache[key] = await _oracle_scalar(
+            "SELECT sid FROM RPS.PREF_REASON WHERE name = 'MANUALLY'", oc
+        )
+    return cache[key]
+
+
+async def _store_sid(store_no: Any, sbssid: Optional[str], cache: dict, oc: dict) -> Optional[str]:
+    """Return the store SID for the given store_no + subsidiary SID pair."""
+    sn = str(store_no).strip() if store_no else "1"
+    if not sbssid:
+        return None
+    key = f"{sn}::{sbssid}"
+    if key not in cache:
+        cache[key] = await _oracle_scalar(
+            f"SELECT sid FROM rps.store WHERE store_no = {sn} AND sbs_sid = '{sbssid}'", oc
+        )
+    return cache[key]
+
+
 # ── Payload builder ─────────────────────────────────────────────────────────────
 
 def _to_json(v: Any) -> Any:
@@ -352,7 +375,13 @@ def _to_json(v: Any) -> Any:
     return v
 
 
-def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict]) -> dict:
+def build_payload(
+    row: dict,
+    sid_overrides: dict,
+    existing_item: Optional[dict],
+    pref_reason_sid: Optional[str] = None,
+    store_sid: Optional[str] = None,
+) -> dict:
     """
     Build the RetailPro InventorySaveItems payload for one row.
 
@@ -366,11 +395,16 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
             "InventoryItems": [ { …all fields…, "invnextend": […] } ],
             "SavingStyle": false,
             "localdate": "YYYY-MM-DDTHH:MM:SS",
+            "DefaultReasonSidForQtyMemo":   <pref_reason_sid>,
+            "DefaultReasonSidForCostMemo":  <pref_reason_sid>,
+            "DefaultReasonSidForPriceMemo": <pref_reason_sid>,
             …
         }
 
-    sid_overrides: {json_field: value} – computed SIDs (dcssid, vendsid, etc.)
-    existing_item: API response item dict for update; None for create.
+    sid_overrides:    {json_field: value} – computed SIDs (dcssid, vendsid, etc.)
+    existing_item:    API response item dict for update; None for create.
+    pref_reason_sid:  SID from RPS.PREF_REASON WHERE name = 'MANUALLY'
+    store_sid:        SID from rps.store for the row's store_no + subsidiary
     """
     # ── InventoryItems entry ──────────────────────────────────────────────────
     inv_item: dict = {}
@@ -412,6 +446,10 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
 
     inv_item["invnextend"] = [extend]
 
+    # activestoresid — resolved from Oracle (store_no + subsidiary)
+    if store_sid:
+        inv_item["activestoresid"] = store_sid
+
     # ── PrimaryItemDefinition ─────────────────────────────────────────────────
     primary_def: dict = {
         "sid": existing_item.get("stylesid") if existing_item else None,
@@ -427,17 +465,22 @@ def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict])
         if v is not None and str(v).strip() != "":
             primary_def[k] = v
 
-    # ── Outer wrapper ─────────────────────────────────────────────────────────
-    return {
-        "OriginApplication": "RProPrismWeb",
+    # ── Outer wrapper (OriginApplication + PrimaryItemDefinition always first) ─
+    outer: dict = {
+        "OriginApplication":    "RProPrismWeb",
         "PrimaryItemDefinition": primary_def,
-        "InventoryItems": [inv_item],
-        "SavingStyle": False,
-        "localdate": now_pkt().strftime("%Y-%m-%dT%H:%M:%S"),
+        "InventoryItems":        [inv_item],
+        "SavingStyle":           False,
+        "localdate":             now_pkt().strftime("%Y-%m-%dT%H:%M:%S"),
         "UpdateStyleDefinition": False,
-        "UpdateStyleCost": False,
-        "UpdateStylePrice": False,
+        "UpdateStyleCost":       False,
+        "UpdateStylePrice":      False,
     }
+    if pref_reason_sid:
+        outer["DefaultReasonSidForQtyMemo"]   = pref_reason_sid
+        outer["DefaultReasonSidForCostMemo"]  = pref_reason_sid
+        outer["DefaultReasonSidForPriceMemo"] = pref_reason_sid
+    return outer
 
 
 # ── Per-row processor ───────────────────────────────────────────────────────────
@@ -452,6 +495,8 @@ async def process_row(
     vend_cache: dict,
     tax_cache: dict,
     sbs_cache: dict,
+    pref_reason_cache: dict,
+    store_cache: dict,
 ) -> dict:
     upc = row.get("UPC", "")
     result: dict = {"upc": upc, "action": None, "sid": None, "ok": False, "error": None,
@@ -482,7 +527,14 @@ async def process_row(
         taxcodesid_val = await _taxcodesid(tax_code, tax_cache, oc)
         sbssid_val     = await _sbssid(sbs_no, sbs_cache, oc)
 
-        # ── 4. Check item by UPC ─────────────────────────────────────────────
+        # ── 4. Preferred-reason SID (DefaultReasonSid* fields) ───────────────
+        pref_reason_sid_val = await _pref_reason_sid(pref_reason_cache, oc)
+
+        # ── 5. Store SID (activestoresid) ────────────────────────────────────
+        store_no_val    = str(row.get("STORE_NO") or "1").strip()
+        store_sid_val   = await _store_sid(store_no_val, sbssid_val, store_cache, oc)
+
+        # ── 6. Check item by UPC ─────────────────────────────────────────────
         check_resp = await http.get(
             f"{base_url}/api/backoffice/inventory",
             params={"filter": f'(upc,eq,"{upc}")', "cols": "*,invnextend.*"},
@@ -503,10 +555,18 @@ async def process_row(
             # For update, preserve existing sbssid if we couldn't resolve it
             if "sbssid" not in sid_overrides:
                 sid_overrides["sbssid"] = existing.get("sbssid")
-            payload = build_payload(row, sid_overrides, existing_item=existing)
+            payload = build_payload(
+                row, sid_overrides, existing_item=existing,
+                pref_reason_sid=pref_reason_sid_val,
+                store_sid=store_sid_val,
+            )
             action = "updated"
         else:
-            payload = build_payload(row, sid_overrides, existing_item=None)
+            payload = build_payload(
+                row, sid_overrides, existing_item=None,
+                pref_reason_sid=pref_reason_sid_val,
+                store_sid=store_sid_val,
+            )
             action = "created"
 
         # ── 5. Upsert ────────────────────────────────────────────────────────
@@ -637,10 +697,12 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session = await get_auth_session()
 
-    dcs_cache:  dict = {}
-    vend_cache: dict = {}
-    tax_cache:  dict = {}
-    sbs_cache:  dict = {}
+    dcs_cache:          dict = {}
+    vend_cache:         dict = {}
+    tax_cache:          dict = {}
+    sbs_cache:          dict = {}
+    pref_reason_cache:  dict = {}
+    store_cache:        dict = {}
 
     results: list[dict] = []
     async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
@@ -655,6 +717,8 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
                 vend_cache=vend_cache,
                 tax_cache=tax_cache,
                 sbs_cache=sbs_cache,
+                pref_reason_cache=pref_reason_cache,
+                store_cache=store_cache,
             )
             results.append(row_result)
             try:
