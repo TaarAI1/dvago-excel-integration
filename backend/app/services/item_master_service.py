@@ -620,9 +620,12 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
     # Store the serialisable row dict (convert datetime → str)
     safe_row = {k: (_to_json(v)) for k, v in row.items()}
 
-    # On failure, embed the sent payload so the UI can show it alongside the error
+    # On failure, embed the sent payload so the UI can show it alongside the error.
+    # Stored as a JSON string (not a nested object) to preserve key insertion order
+    # when retrieved from PostgreSQL JSONB.
     if not ok and result.get("_payload_sent"):
-        safe_row["_payload_sent"] = result["_payload_sent"]
+        import json as _json
+        safe_row["_payload_sent"] = _json.dumps(result["_payload_sent"], indent=2, ensure_ascii=False)
 
     async with get_session() as session:
         async with session.begin():

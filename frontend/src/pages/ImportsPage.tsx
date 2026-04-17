@@ -107,8 +107,12 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
   const vend = cell(doc, 'VEND_CODE')
   const alu  = cell(doc, 'ALU')
 
-  // Payload sent to RetailPro (only present on error records)
-  const payloadSent = doc.original_data?._payload_sent as Record<string, unknown> | undefined
+  // Payload sent to RetailPro (only present on error records).
+  // Stored as a pre-formatted JSON string to preserve key order from Python.
+  const payloadSentRaw = doc.original_data?._payload_sent
+  const payloadSentStr = typeof payloadSentRaw === 'string'
+    ? payloadSentRaw
+    : payloadSentRaw != null ? JSON.stringify(payloadSentRaw, null, 2) : null
 
   // Pretty-print error
   let errorDisplay = doc.error_message || ''
@@ -181,7 +185,7 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
         )}
 
         {/* Payload sent */}
-        {payloadSent && (
+        {payloadSentStr && (
           <Box sx={{ mx: 3, mb: 2, mt: doc.error_message ? 0 : 1 }}>
             <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
               textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1 }}>
@@ -192,7 +196,7 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
               <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
                 whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word',
                 lineHeight: 1.6 }}>
-                {JSON.stringify(payloadSent, null, 2)}
+                {payloadSentStr}
               </Typography>
             </Box>
           </Box>
