@@ -451,12 +451,14 @@ def build_payload(
         inv_item["activestoresid"] = store_sid
 
     # ── PrimaryItemDefinition ─────────────────────────────────────────────────
+    # Key order: sid → dcssid → vendsid → description1 → description2 → attribute → itemsize
+    # dcssid and vendsid are always included (can be null, same as sid).
     primary_def: dict = {
-        "sid": existing_item.get("stylesid") if existing_item else None,
+        "sid":    existing_item.get("stylesid") if existing_item else None,
+        "dcssid": sid_overrides.get("dcssid"),
+        "vendsid": sid_overrides.get("vendsid"),
     }
     for k, v in {
-        "dcssid":       sid_overrides.get("dcssid"),
-        "vendsid":      sid_overrides.get("vendsid"),
         "description1": inv_item.get("description1"),
         "description2": inv_item.get("description2"),
         "attribute":    inv_item.get("attribute"),
