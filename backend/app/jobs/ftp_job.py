@@ -5,65 +5,49 @@ from datetime import datetime
 from app.db.postgres import get_session
 from app.db.settings_store import get_setting
 from app.models.activity_log import write_log
-from app.models.ftp_seen_file import FtpSeenFile
 from app.models.system_config import SystemConfig
 from app.services.ftp_service import (
-    list_all_files,
+    list_excel_files,
     download_excel_file,
     move_ftp_file_to_processed,
 )
 
 logger = logging.getLogger(__name__)
 
-# ── Module routing by filename keyword ──────────────────────────────────────────
-# Add entries here as new Excel modules are introduced.
-_EXCEL_MODULE_KEYWORDS: list[tuple[str, str]] = [
-    ("item master",  "item_master"),
-    ("item_master",  "item_master"),
-]
-
-
-def _detect_excel_module(filename: str) -> str | None:
-    """Return the module key for an Excel file based on its name, or None if unknown."""
-    lower = filename.lower()
-    for keyword, module in _EXCEL_MODULE_KEYWORDS:
-        if keyword in lower:
-            return module
-    return None
-
 
 async def _poll_item_master(host: str, port: int, user: str, password: str) -> tuple[int, int]:
     """
-    Poll the Item Master import path for new .xlsx files and process them.
-    Returns (new_files_count, rows_processed_count).
+    Poll the Item Master import path and process every .xlsx file found.
+
+    - No filename keyword filtering: any .xlsx in the path is treated as item master data.
+    - No seen-file deduplication: every file present on each poll is processed, so
+      uploading a file with the same name as a previous batch will always be picked up.
+    - After processing, the file is moved to {import_path}/processed/ with a timestamp
+      suffix so the source folder stays clean for the next upload.
+
+    Returns (files_processed_count, rows_processed_count).
     """
     import_path = (await get_setting("ftp_import_path", "/")) or "/"
     processed_path = import_path.rstrip("/") + "/processed"
 
     try:
-        all_files = list_all_files(host, port, user, password, import_path)
+        all_files = list_excel_files(host, port, user, password, import_path)
     except Exception as exc:
         logger.error(f"[Item Master] FTP listing failed for path '{import_path}': {exc}")
         return 0, 0
 
-    all_files = [f for f in all_files if "/processed" not in f.lower() and f.lower().endswith(".xlsx")]
+    # Exclude anything already sitting inside a processed sub-folder
+    all_files = [f for f in all_files if "/processed" not in f.lower()]
 
-    new_files = 0
+    if not all_files:
+        logger.info("[Item Master] No .xlsx files found in import path.")
+        return 0, 0
+
+    files_processed = 0
     im_processed = 0
 
     for filename in all_files:
-        async with get_session() as session:
-            seen = await session.get(FtpSeenFile, filename)
-        if seen:
-            logger.debug(f"[Item Master] Skipping already-processed file: {filename}")
-            continue
-
-        module = _detect_excel_module(filename)
-        if module != "item_master":
-            logger.warning(f"[Item Master] File '{filename}' does not match item master keywords – skipping.")
-            continue
-
-        new_files += 1
+        files_processed += 1
         file_start = time.monotonic()
 
         try:
@@ -98,14 +82,13 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
                     details=summary, duration_ms=duration_ms,
                     metadata={"filename": filename},
                 )
-                session.add(FtpSeenFile(filename=filename, processed_at=datetime.utcnow()))
 
         try:
             move_ftp_file_to_processed(filename, import_path, processed_path, host, port, user, password)
         except Exception as exc:
             logger.warning(f"[Item Master] Could not move {filename} to processed: {exc}")
 
-    return new_files, im_processed
+    return files_processed, im_processed
 
 
 async def poll_ftp_and_ingest():
@@ -114,12 +97,9 @@ async def poll_ftp_and_ingest():
 
     Routing logic
     ─────────────
-    • Item Master import path  → .xlsx files matching "item master" keyword
-                                 → item_master_service
+    • Item Master import path → every .xlsx found → item_master_service
+      (no filename filtering, no seen-file deduplication — always reprocessed)
     • (CSV paths for qty adjust, price adjustment, transfers, GRN — future modules)
-
-    After every file is processed it is moved to {path}/processed/ and tracked
-    in ftp_seen_files so it is never re-processed.
     """
     job_start = time.monotonic()
     logger.info("FTP poll job started.")
