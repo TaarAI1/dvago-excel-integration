@@ -5,6 +5,7 @@ from sqlalchemy import String, Text, Float, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.db.postgres import Base
+from app.core.timezone import now_pkt
 
 
 class ActivityLog(Base):
@@ -14,7 +15,7 @@ class ActivityLog(Base):
     activity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     document_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=now_pkt, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -49,7 +50,7 @@ async def write_log(session, **kwargs) -> None:
         activity_type=kwargs.get("activity_type", "error"),
         document_id=doc_id,
         document_type=kwargs.get("document_type"),
-        timestamp=datetime.utcnow(),
+        timestamp=now_pkt(),
         status=kwargs.get("status", "success"),
         details=kwargs.get("details"),
         duration_ms=kwargs.get("duration_ms"),

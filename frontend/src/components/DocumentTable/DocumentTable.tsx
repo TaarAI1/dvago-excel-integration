@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fmtDateTime } from '../../utils/time'
 import {
   Box, Typography, Button, TextField, Select, MenuItem,
   FormControl, InputLabel, Chip, Dialog, DialogTitle,
@@ -83,13 +84,13 @@ export default function DocumentTable() {
       field: 'created_at',
       headerName: 'Created',
       width: 175,
-      valueFormatter: (value: string) => value ? new Date(value).toLocaleString() : '',
+      valueFormatter: (value: string) => value ? fmtDateTime(value) : '',
     },
     {
       field: 'posted_at',
       headerName: 'Posted At',
       width: 175,
-      valueFormatter: (value: string) => value ? new Date(value).toLocaleString() : '—',
+      valueFormatter: (value: string) => value ? fmtDateTime(value) : '—',
     },
     {
       field: 'actions',
@@ -231,8 +232,8 @@ export default function DocumentTable() {
                 <Box><Typography variant="caption" color="text.secondary">Status</Typography><Box><StatusChip doc={selectedDoc} /></Box></Box>
                 <Box><Typography variant="caption" color="text.secondary">RetailPro SID</Typography><Typography>{selectedDoc.retailprosid || '—'}</Typography></Box>
                 <Box><Typography variant="caption" color="text.secondary">Source File</Typography><Typography>{selectedDoc.source_file || '—'}</Typography></Box>
-                <Box><Typography variant="caption" color="text.secondary">Created</Typography><Typography>{selectedDoc.created_at ? new Date(selectedDoc.created_at).toLocaleString() : '—'}</Typography></Box>
-                <Box><Typography variant="caption" color="text.secondary">Posted At</Typography><Typography>{selectedDoc.posted_at ? new Date(selectedDoc.posted_at).toLocaleString() : '—'}</Typography></Box>
+                <Box><Typography variant="caption" color="text.secondary">Created</Typography><Typography>{fmtDateTime(selectedDoc.created_at)}</Typography></Box>
+                <Box><Typography variant="caption" color="text.secondary">Posted At</Typography><Typography>{fmtDateTime(selectedDoc.posted_at)}</Typography></Box>
               </Box>
 
               {selectedDoc.has_error && selectedDoc.error_message && (

@@ -1,7 +1,7 @@
 import time
 import logging
-from datetime import datetime
 
+from app.core.timezone import now_pkt
 from app.db.postgres import get_session
 from app.db.settings_store import get_setting
 from app.models.activity_log import write_log
@@ -113,7 +113,7 @@ async def poll_ftp_and_ingest():
     async with get_session() as session:
         async with session.begin():
             await session.merge(
-                SystemConfig(key="last_ftp_poll_start", value=datetime.utcnow().isoformat())
+                SystemConfig(key="last_ftp_poll_start", value=now_pkt().isoformat())
             )
 
     new_files     = 0
@@ -142,5 +142,5 @@ async def poll_ftp_and_ingest():
                           "im_processed": im_processed},
             )
             await session.merge(
-                SystemConfig(key="last_ftp_poll_success", value=datetime.utcnow().isoformat())
+                SystemConfig(key="last_ftp_poll_success", value=now_pkt().isoformat())
             )

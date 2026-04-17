@@ -17,8 +17,9 @@ code/subsidiary is only looked up once.
 """
 import io
 import logging
-from datetime import datetime
 from typing import Any, Optional
+
+from app.core.timezone import now_pkt
 
 import httpx
 import openpyxl
@@ -326,9 +327,10 @@ async def _taxcodesid(tax_code: str, tax_cache: dict, oc: dict) -> Optional[str]
 # ── Payload builder ─────────────────────────────────────────────────────────────
 
 def _to_json(v: Any) -> Any:
+    from datetime import datetime as _dt
     if v is None:
         return None
-    if isinstance(v, datetime):
+    if isinstance(v, _dt):
         return v.isoformat()
     return v
 
@@ -514,7 +516,7 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
                 has_error=not ok,
                 error_message=error_msg,          # full API response on failure
                 source_file=source_file,
-                posted_at=datetime.utcnow() if ok else None,
+                posted_at=now_pkt() if ok else None,
             )
             session.add(doc)
 

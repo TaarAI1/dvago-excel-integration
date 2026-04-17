@@ -1,7 +1,8 @@
 import asyncio
 import json
-from datetime import datetime
 from typing import Optional, AsyncGenerator
+
+from app.core.timezone import now_pkt
 
 from fastapi import APIRouter, Query, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -31,10 +32,9 @@ def _verify_sse_token(token: Optional[str]) -> str:
 
 
 async def _stats_generator() -> AsyncGenerator[str, None]:
-    from datetime import date
     while True:
         try:
-            today_start = datetime.combine(date.today(), datetime.min.time())
+            today_start = now_pkt().replace(hour=0, minute=0, second=0, microsecond=0)
             async with get_session() as session:
                 total = await session.scalar(select(func.count()).select_from(Document)) or 0
                 posted = await session.scalar(select(func.count()).select_from(Document).where(Document.posted == True)) or 0
@@ -57,7 +57,7 @@ async def _stats_generator() -> AsyncGenerator[str, None]:
                 "posted_today": posted_today,
                 "post_rate_pct": round(posted / total * 100, 1) if total else 0,
                 "last_poll_time": last_poll.value if last_poll else None,
-                "ts": datetime.utcnow().isoformat(),
+                "ts": now_pkt().isoformat(),
             }
             yield f"data: {json.dumps(payload)}\n\n"
         except Exception:
@@ -67,7 +67,7 @@ async def _stats_generator() -> AsyncGenerator[str, None]:
 
 
 async def _logs_generator() -> AsyncGenerator[str, None]:
-    last_ts = datetime.utcnow()
+    last_ts = now_pkt()
     while True:
         try:
             async with get_session() as session:

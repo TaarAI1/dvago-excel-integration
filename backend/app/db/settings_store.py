@@ -6,12 +6,12 @@ is stored in the app_settings table and editable via the Config UI.
 DATABASE_URL and JWT_SECRET_KEY remain env-only and are never stored here.
 """
 import logging
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
 from app.db.postgres import get_session
 from app.models.app_setting import AppSetting
+from app.core.timezone import now_pkt
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ async def seed_defaults(env_overrides: dict) -> None:
                         category=category,
                         label=label,
                         is_sensitive=is_sensitive,
-                        updated_at=datetime.utcnow(),
+                        updated_at=now_pkt(),
                     ))
     logger.info("App settings seeded.")
 
@@ -130,5 +130,5 @@ async def update_settings(updates: dict) -> None:
                 row = await session.get(AppSetting, key)
                 if row is not None:
                     row.value = str(value)
-                    row.updated_at = datetime.utcnow()
+                    row.updated_at = now_pkt()
     logger.info(f"Updated {len(updates)} settings.")

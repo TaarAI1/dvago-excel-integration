@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { fmtTime } from '../../utils/time'
 import {
   Box, Typography, Chip, Select, MenuItem, FormControl, InputLabel,
   TextField, Button, IconButton, Tooltip, Stack,
@@ -28,7 +29,7 @@ function LogRow({ log }: { log: LogEntry }) {
   return (
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', py: 0.75, borderBottom: '1px solid', borderColor: 'divider' }}>
       <Typography variant="caption" sx={{ color: 'text.secondary', minWidth: 80, whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-        {new Date(log.timestamp).toLocaleTimeString()}
+        {fmtTime(log.timestamp)}
       </Typography>
       <Chip label={log.activity_type} size="small" variant="outlined" sx={{ fontSize: 10, height: 20, minWidth: 90 }} />
       <Chip label={log.status} size="small" color={statusColor} sx={{ fontSize: 10, height: 20, minWidth: 60 }} />

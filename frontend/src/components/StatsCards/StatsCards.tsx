@@ -1,4 +1,5 @@
 import { Box, Typography, Skeleton } from '@mui/material'
+import { fmtTime, fmtDateTime } from '../../utils/time'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
@@ -67,7 +68,7 @@ export default function StatsCards() {
               '@keyframes blink': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.3 } },
             }} />
             <Typography sx={{ fontSize: '0.7rem', color: '#9ca3af' }}>
-              {new Date(stats.ts).toLocaleTimeString()}
+              {fmtTime(stats.ts)}
             </Typography>
           </>
         )}
@@ -93,7 +94,7 @@ export default function StatsCards() {
 
       {stats?.last_poll_time && (
         <Typography sx={{ fontSize: '0.7rem', color: '#9ca3af', mt: 1 }}>
-          Last poll: {new Date(stats.last_poll_time).toLocaleString()}
+          Last poll: {fmtDateTime(stats.last_poll_time)}
         </Typography>
       )}
     </Box>

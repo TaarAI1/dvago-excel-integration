@@ -8,14 +8,22 @@ from typing import List
 logger = logging.getLogger(__name__)
 
 
+def _nlst_basenames(ftp: ftplib.FTP) -> list[str]:
+    """
+    Return bare filenames from the current FTP directory.
+    Some FTP servers return full absolute paths from nlst(); this normalises
+    them to basenames so downstream code always sees just "file.xlsx".
+    """
+    return [os.path.basename(f) for f in ftp.nlst()]
+
+
 def list_csv_files(host: str, port: int, user: str, password: str, path: str) -> List[str]:
     """Connect to FTP and return list of .csv filenames in the given path."""
     with ftplib.FTP() as ftp:
         ftp.connect(host, port, timeout=30)
         ftp.login(user, password)
         ftp.cwd(path)
-        all_files = ftp.nlst()
-        filenames = [f for f in all_files if f.lower().endswith(".csv")]
+        filenames = [f for f in _nlst_basenames(ftp) if f.lower().endswith(".csv")]
     logger.debug(f"FTP listed {len(filenames)} CSV files in {path}")
     return filenames
 
@@ -25,6 +33,7 @@ def download_csv_file(filename: str, host: str, port: int, user: str, password: 
     Download a single CSV file from FTP to a temp file.
     Returns the local temp file path. Caller is responsible for deleting it.
     """
+    filename = os.path.basename(filename)
     suffix = os.path.splitext(filename)[1] or ".csv"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="ftp_")
     tmp_path = tmp.name
@@ -48,26 +57,25 @@ def list_all_files(host: str, port: int, user: str, password: str, path: str) ->
         ftp.connect(host, port, timeout=30)
         ftp.login(user, password)
         ftp.cwd(path)
-        all_files = ftp.nlst()
-        filenames = [f for f in all_files if f.lower().endswith(_EXTS)]
+        filenames = [f for f in _nlst_basenames(ftp) if f.lower().endswith(_EXTS)]
     logger.debug(f"FTP listed {len(filenames)} importable files in {path}")
     return filenames
 
 
 def list_excel_files(host: str, port: int, user: str, password: str, path: str) -> list[str]:
-    """Connect to FTP and return list of .xlsx filenames in the given path."""
+    """Return all .xlsx filenames in the given FTP path."""
     with ftplib.FTP() as ftp:
         ftp.connect(host, port, timeout=30)
         ftp.login(user, password)
         ftp.cwd(path)
-        all_files = ftp.nlst()
-        filenames = [f for f in all_files if f.lower().endswith(".xlsx")]
+        filenames = [f for f in _nlst_basenames(ftp) if f.lower().endswith(".xlsx")]
     logger.debug(f"FTP listed {len(filenames)} Excel files in {path}")
     return filenames
 
 
 def download_excel_file(filename: str, host: str, port: int, user: str, password: str, path: str) -> bytes:
     """Download a single Excel file from FTP and return its raw bytes."""
+    filename = os.path.basename(filename)
     buf = io.BytesIO()
     with ftplib.FTP() as ftp:
         ftp.connect(host, port, timeout=60)
@@ -92,8 +100,10 @@ def move_ftp_file_to_processed(
     Creates dst_path directory if it does not exist.
     The file is renamed with a timestamp to avoid collisions.
     """
-    from datetime import datetime as _dt
-    stamp = _dt.utcnow().strftime("%Y%m%d_%H%M%S")
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _PKT = _tz(_td(hours=5))
+    stamp = _dt.now(_PKT).strftime("%Y%m%d_%H%M%S")
+    filename = os.path.basename(filename)
     base, ext = os.path.splitext(filename)
     dst_filename = f"{base}_{stamp}{ext}"
 

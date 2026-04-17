@@ -5,8 +5,8 @@ import asyncio
 import io
 import logging
 import time
-from datetime import datetime
 
+from app.core.timezone import now_pkt
 from app.db.postgres import get_session
 from app.db.settings_store import get_setting
 from app.models.activity_log import write_log
@@ -70,7 +70,7 @@ async def run_sales_export():
         return
 
     # Upload to FTP
-    filename = f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"{prefix}_{now_pkt().strftime('%Y%m%d_%H%M%S')}.csv"
     try:
         await asyncio.to_thread(
             upload_file, csv_bytes, filename, ftp_host, ftp_port, ftp_user, ftp_password, export_path

@@ -1,0 +1,20 @@
+fix: FTP file pickup and Pakistan timezone throughout app
+
+FTP listing fix:
+- Normalise os.path.basename() on every entry from ftp.nlst() so files
+  are always picked up regardless of whether the FTP server returns full
+  absolute paths or bare filenames (root cause of "0 new files" bug)
+- Apply basename normalisation in list_csv_files, list_all_files,
+  list_excel_files, download_csv_file, download_excel_file, and
+  move_ftp_file_to_processed
+
+Pakistan Standard Time (UTC+5):
+- Add backend/app/core/timezone.py with now_pkt() utility
+- Replace every datetime.utcnow() call with now_pkt() in:
+  activity_log.py, settings_store.py, ftp_job.py, sales_export_job.py,
+  item_master_service.py, stream.py
+- Fix today_start in stats generator to use PKT midnight
+- Add frontend/src/utils/time.ts with fmtTime / fmtDateTime / fmtDate
+  helpers forced to Asia/Karachi timezone
+- Update all timestamp displays in ActivityLog, StatsCards,
+  DashboardPage, ImportsPage, DocumentTable, UsersPage to use PKT helpers

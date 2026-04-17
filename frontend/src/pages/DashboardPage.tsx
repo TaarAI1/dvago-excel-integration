@@ -10,6 +10,7 @@ import PlayCircleOutlinedIcon from '@mui/icons-material/PlayCircleOutlined'
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
+import { fmtTime } from '../utils/time'
 import StatsCards from '../components/StatsCards/StatsCards'
 import ActivityLog from '../components/ActivityLog/ActivityLog'
 
@@ -170,9 +171,9 @@ export default function DashboardPage() {
 
         {(nextFtpRun || nextSalesRun) && (
           <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
-            {nextFtpRun && `Next FTP: ${new Date(nextFtpRun).toLocaleTimeString()}`}
+            {nextFtpRun && `Next FTP: ${fmtTime(nextFtpRun)}`}
             {nextFtpRun && nextSalesRun && '  ·  '}
-            {nextSalesRun && `Export: ${new Date(nextSalesRun).toLocaleTimeString()}`}
+            {nextSalesRun && `Export: ${fmtTime(nextSalesRun)}`}
           </Typography>
         )}
         {triggerMutation.isSuccess && (

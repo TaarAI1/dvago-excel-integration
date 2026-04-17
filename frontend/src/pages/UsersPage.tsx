@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fmtDate } from '../utils/time'
 import {
   Box, Typography, Button, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, IconButton, Chip, Tooltip, Alert, CircularProgress,
@@ -110,7 +111,7 @@ export default function UsersPage() {
                       }} />
                   </TableCell>
                   <TableCell sx={{ color: '#6b7280' }}>
-                    {new Date(u.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    {fmtDate(u.created_at)}
                   </TableCell>
                   <TableCell align="right">
                     <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>

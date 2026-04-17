@@ -13,6 +13,7 @@ import HourglassTopIcon from '@mui/icons-material/HourglassTop'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
+import { fmtDateTime } from '../utils/time'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,18 +43,8 @@ interface Batch {
   errors: number
 }
 
-// ── Date helper: dd/MM/yyyy HH:mm ─────────────────────────────────────────────
-
-const fmt = (iso: string | null): string => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const dd   = String(d.getDate()).padStart(2, '0')
-  const mm   = String(d.getMonth() + 1).padStart(2, '0')
-  const yyyy = d.getFullYear()
-  const hh   = String(d.getHours()).padStart(2, '0')
-  const min  = String(d.getMinutes()).padStart(2, '0')
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`
-}
+// ── Date helper (PKT) ─────────────────────────────────────────────────────────
+const fmt = fmtDateTime
 
 // ── Cell helper ───────────────────────────────────────────────────────────────
 
