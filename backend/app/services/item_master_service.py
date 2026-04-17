@@ -537,7 +537,7 @@ async def process_row(
                 "action": action, "ok": False,
                 "api_response": save_resp.text,
                 "error": save_resp.text,
-                "_payload_sent": payload,   # stored so UI can show what was sent
+                "_payload_sent": {"data": [payload]},   # full request body for UI display
             })
 
     except Exception as exc:
