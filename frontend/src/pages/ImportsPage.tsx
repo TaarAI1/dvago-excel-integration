@@ -101,15 +101,11 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => void }) {
   if (!doc) return null
 
-  const upc   = cell(doc, 'UPC')
-  const desc  = cell(doc, 'DESCRIPTION1') !== '—' ? cell(doc, 'DESCRIPTION1') : cell(doc, 'DESCRIPTION')
-  const desc2 = cell(doc, 'DESCRIPTION2')
-  const cost  = cell(doc, 'COST')
-  const dcs   = cell(doc, 'DCS_CODE')
-  const vend  = cell(doc, 'VEND_CODE')
-  const tax   = cell(doc, 'TAX_CODE')
-  const sbs   = cell(doc, 'SBS_NO')
-  const alu   = cell(doc, 'ALU')
+  const upc  = cell(doc, 'UPC')
+  const desc = cell(doc, 'DESCRIPTION1') !== '—' ? cell(doc, 'DESCRIPTION1') : cell(doc, 'DESCRIPTION')
+  const dcs  = cell(doc, 'DCS_CODE')
+  const vend = cell(doc, 'VEND_CODE')
+  const alu  = cell(doc, 'ALU')
 
   // Payload sent to RetailPro (only present on error records)
   const payloadSent = doc.original_data?._payload_sent as Record<string, unknown> | undefined
@@ -135,15 +131,11 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
           </Typography>
         </Box>
         <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827', lineHeight: 1.3, mt: 0.5 }}>
-          {desc !== '—' ? desc : '(no description)'}
+          Item Details
         </Typography>
-        {desc2 !== '—' && (
-          <Typography sx={{ fontSize: '0.78rem', color: '#6b7280', mt: 0.25 }}>{desc2}</Typography>
+        {desc !== '—' && (
+          <Typography sx={{ fontSize: '0.78rem', color: '#6b7280', mt: 0.25 }}>{desc}</Typography>
         )}
-        <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af', mt: 0.5,
-          fontFamily: 'monospace', letterSpacing: '0.04em' }}>
-          UPC: {upc}
-        </Typography>
       </Box>
 
       <DialogContent sx={{ p: 0, maxHeight: '72vh', overflowY: 'auto' }}>
@@ -153,12 +145,11 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
             textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>
             Item Details
           </Typography>
+          <InfoRow label="UPC"          value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 500 }}>{upc}</Typography>} />
+          {alu  !== '—' && <InfoRow label="ALU"           value={alu} />}
+          {desc !== '—' && <InfoRow label="Description 1" value={desc} />}
           <InfoRow label="DCS Code"    value={dcs} />
           <InfoRow label="Vendor Code" value={vend} />
-          <InfoRow label="Tax Code"    value={tax} />
-          {sbs  !== '—' && <InfoRow label="Subsidiary No" value={sbs} />}
-          {alu  !== '—' && <InfoRow label="ALU"           value={alu} />}
-          {cost !== '—' && <InfoRow label="Cost"          value={cost} />}
           <InfoRow label="Source File" value={doc.source_file || '—'} />
           {doc.retailprosid && (
             <InfoRow label="RetailPro SID"
