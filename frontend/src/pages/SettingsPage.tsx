@@ -343,9 +343,21 @@ export default function SettingsPage() {
               <Grid size={{ xs: 12, sm: 4 }}>{F('ftp_port', 'Port')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_user', 'Username')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_password', 'Password', true)}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_import_path', 'Import Path')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_export_path', 'Export Path')}</Grid>
             </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Import Paths</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_import_path', 'Item Master Import Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_qty_adjust_import_path', 'Quantity Adjust Import Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_price_adj_import_path', 'Price Adjustment Import Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_transfers_import_path', 'Transfers Import Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_grn_import_path', 'GRN Import Path')}</Grid>
+            </Grid>
+
             <TestButton label="Test FTP" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="ftp" />

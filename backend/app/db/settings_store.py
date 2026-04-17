@@ -18,12 +18,16 @@ logger = logging.getLogger(__name__)
 # Master definition of every setting: key, category, label, default, is_sensitive
 SETTING_DEFINITIONS = [
     # FTP (shared server, separate paths)
-    ("ftp_host",                  "ftp",          "FTP Host",                    "localhost",    False),
-    ("ftp_port",                  "ftp",          "FTP Port",                    "21",           False),
-    ("ftp_user",                  "ftp",          "FTP Username",                "anonymous",    False),
-    ("ftp_password",              "ftp",          "FTP Password",                "",             True),
-    ("ftp_import_path",           "ftp",          "FTP Import Path",             "/",            False),
-    ("ftp_export_path",           "ftp",          "FTP Export Path",             "/exports",     False),
+    ("ftp_host",                       "ftp",  "FTP Host",                        "localhost", False),
+    ("ftp_port",                       "ftp",  "FTP Port",                        "21",        False),
+    ("ftp_user",                       "ftp",  "FTP Username",                    "anonymous", False),
+    ("ftp_password",                   "ftp",  "FTP Password",                    "",          True),
+    ("ftp_import_path",                "ftp",  "Item Master Import Path",         "/",         False),
+    ("ftp_qty_adjust_import_path",     "ftp",  "Quantity Adjust Import Path",     "/",         False),
+    ("ftp_price_adj_import_path",      "ftp",  "Price Adjustment Import Path",    "/",         False),
+    ("ftp_transfers_import_path",      "ftp",  "Transfers Import Path",           "/",         False),
+    ("ftp_grn_import_path",            "ftp",  "GRN Import Path",                 "/",         False),
+    ("ftp_export_path",                "ftp",  "FTP Export Path",                 "/exports",  False),
     # RetailPro
     ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "http://your-retailpro-server", False),
     ("retailpro_username",        "retailpro",    "RetailPro Username",          "",             False),
