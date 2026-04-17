@@ -354,55 +354,90 @@ def _to_json(v: Any) -> Any:
 
 def build_payload(row: dict, sid_overrides: dict, existing_item: Optional[dict]) -> dict:
     """
-    Build the full inventory JSON payload for one row.
+    Build the RetailPro InventorySaveItems payload for one row.
+
+    The outer shape expected by the API is:
+        {"data": [<this return value>]}
+
+    where this return value is:
+        {
+            "OriginApplication": "RProPrismWeb",
+            "PrimaryItemDefinition": { dcssid, vendsid, description1, … , sid },
+            "InventoryItems": [ { …all fields…, "invnextend": […] } ],
+            "SavingStyle": false,
+            "localdate": "YYYY-MM-DDTHH:MM:SS",
+            …
+        }
 
     sid_overrides: {json_field: value} – computed SIDs (dcssid, vendsid, etc.)
-    existing_item: API response item dict if this is an update; None for create.
-
-    For UPDATE: sid and rowversion come from the existing API response (required by RetailPro).
-    For CREATE: sid = None so RetailPro assigns a new SID; rowversion from Excel ROW_VERSION column.
+    existing_item: API response item dict for update; None for create.
     """
-    payload: dict = {}
+    # ── InventoryItems entry ──────────────────────────────────────────────────
+    inv_item: dict = {}
 
     if existing_item:
-        # UPDATE — must use the server's current sid + rowversion
-        payload["sid"] = existing_item.get("sid")
-        payload["rowversion"] = existing_item.get("rowversion")
+        inv_item["sid"] = existing_item.get("sid")
+        inv_item["rowversion"] = existing_item.get("rowversion")
     else:
-        # CREATE — sid must be None; include rowversion from Excel if present
-        payload["sid"] = None
+        inv_item["sid"] = None
         rv = row.get("ROW_VERSION")
         if rv is not None:
             try:
-                payload["rowversion"] = int(rv)
+                inv_item["rowversion"] = int(rv)
             except (ValueError, TypeError):
-                payload["rowversion"] = rv
+                inv_item["rowversion"] = rv
 
-    # Map remaining Excel columns → JSON fields (skip None and empty strings)
+    # Map Excel columns → JSON fields (skip None and empty strings)
     for col, json_key in MAIN_FIELD_MAP.items():
-        if col in row and row[col] is not None and str(row[col]).strip() != "" and json_key not in payload:
-            payload[json_key] = _to_json(row[col])
+        if col in row and row[col] is not None and str(row[col]).strip() != "" and json_key not in inv_item:
+            inv_item[json_key] = _to_json(row[col])
 
     # Inject computed SIDs (overwrite whatever came from Excel)
-    payload.update(sid_overrides)
+    inv_item.update(sid_overrides)
 
-    # invnextend sub-object
+    # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
     if existing_item:
         ex_ext = (existing_item.get("invnextend") or [{}])[0]
-        extend["sid"] = ex_ext.get("sid")
-        extend["rowversion"] = ex_ext.get("rowversion")
-        extend["invnsbsitemsid"] = existing_item.get("sid")
-    else:
-        extend["sid"] = None
-        extend["invnsbsitemsid"] = None
+        if ex_ext.get("sid") is not None:
+            extend["sid"] = ex_ext["sid"]
+        if ex_ext.get("rowversion") is not None:
+            extend["rowversion"] = ex_ext["rowversion"]
+        if existing_item.get("sid") is not None:
+            extend["invnsbsitemsid"] = existing_item["sid"]
 
     for col, json_key in INVNEXTEND_MAP.items():
         if col in row and row[col] is not None and str(row[col]).strip() != "":
             extend[json_key] = _to_json(row[col])
 
-    payload["invnextend"] = [extend]
-    return payload
+    inv_item["invnextend"] = [extend]
+
+    # ── PrimaryItemDefinition ─────────────────────────────────────────────────
+    primary_def: dict = {
+        "sid": existing_item.get("stylesid") if existing_item else None,
+    }
+    for k, v in {
+        "dcssid":       sid_overrides.get("dcssid"),
+        "vendsid":      sid_overrides.get("vendsid"),
+        "description1": inv_item.get("description1"),
+        "description2": inv_item.get("description2"),
+        "attribute":    inv_item.get("attribute"),
+        "itemsize":     inv_item.get("itemsize"),
+    }.items():
+        if v is not None and str(v).strip() != "":
+            primary_def[k] = v
+
+    # ── Outer wrapper ─────────────────────────────────────────────────────────
+    return {
+        "OriginApplication": "RProPrismWeb",
+        "PrimaryItemDefinition": primary_def,
+        "InventoryItems": [inv_item],
+        "SavingStyle": False,
+        "localdate": now_pkt().strftime("%Y-%m-%dT%H:%M:%S"),
+        "UpdateStyleDefinition": False,
+        "UpdateStyleCost": False,
+        "UpdateStylePrice": False,
+    }
 
 
 # ── Per-row processor ───────────────────────────────────────────────────────────
@@ -483,7 +518,14 @@ async def process_row(
         )
         save_json = save_resp.json()
         saved_data = save_json.get("data") or []
-        sid = saved_data[0].get("sid") if saved_data else None
+        # Response mirrors the new structure: data[0].InventoryItems[0].sid
+        sid = None
+        if saved_data:
+            inv_items = saved_data[0].get("InventoryItems") or []
+            if inv_items:
+                sid = inv_items[0].get("sid")
+            if not sid:
+                sid = saved_data[0].get("sid")
 
         if save_resp.status_code in (200, 201) and sid:
             result.update({
