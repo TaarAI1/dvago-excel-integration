@@ -200,7 +200,7 @@ function OracleTestButton({ onClick, result }:
   )
 }
 
-const TABS = ['FTP', 'Oracle DB', 'RetailPro API', 'Scheduler', 'Sales Export']
+const TABS = ['FTP', 'Oracle DB', 'RetailPro API', 'Scheduler', 'Sales Export', 'SMTP']
 
 export default function SettingsPage() {
   const qc = useQueryClient()
@@ -526,6 +526,44 @@ export default function SettingsPage() {
             </Typography>
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="sales_export" />
+          </TabPanel>
+
+          {/* ── SMTP ── */}
+          <TabPanel value={tab} index={5}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('smtp_host', 'SMTP Host')}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('smtp_port', 'Port')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_username', 'Username')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_password', 'Password', true)}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  select
+                  label="Use TLS"
+                  value={g('smtp_use_tls')}
+                  onChange={(e) => set('smtp_use_tls', e.target.value)}
+                  fullWidth
+                  size="small"
+                  slotProps={{ select: { native: true } }}
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </TextField>
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Email Addresses</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_from_email', 'From Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email', 'To Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_reply_to', 'Reply To')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_cc_email', 'CC Email')}</Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }} />
+            <SaveBtn cat="smtp" />
           </TabPanel>
         </Box>
       </Box>

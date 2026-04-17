@@ -49,6 +49,16 @@ SETTING_DEFINITIONS = [
     # Sales Export
     ("sales_export_sql",          "sales_export", "Sales SQL Query",             "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix", "sales_export", "Output Filename Prefix",  "sales_export", False),
+    # SMTP
+    ("smtp_host",                 "smtp",         "SMTP Host",                   "",             False),
+    ("smtp_port",                 "smtp",         "SMTP Port",                   "587",          False),
+    ("smtp_username",             "smtp",         "SMTP Username",               "",             False),
+    ("smtp_password",             "smtp",         "SMTP Password",               "",             True),
+    ("smtp_use_tls",              "smtp",         "Use TLS",                     "true",         False),
+    ("smtp_from_email",           "smtp",         "From Email",                  "",             False),
+    ("smtp_to_email",             "smtp",         "To Email",                    "",             False),
+    ("smtp_reply_to",             "smtp",         "Reply To",                    "",             False),
+    ("smtp_cc_email",             "smtp",         "CC Email",                    "",             False),
 ]
 
 
