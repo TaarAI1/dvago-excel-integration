@@ -1,0 +1,36 @@
+# Exclude files that are never needed inside the Docker build context.
+# Presence of this file forces BuildKit to recompute the context snapshot
+# from the live filesystem instead of reusing a stale cached ref.
+
+# Version control
+.git/
+.gitignore
+
+# Frontend (not needed for the backend image)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python bytecode / caches (rebuilt inside container)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.env.local
