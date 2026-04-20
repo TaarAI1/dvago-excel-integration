@@ -486,12 +486,13 @@ def build_payload(
         except (ValueError, TypeError):
             pass
 
-    # useqtydecimals must always be an integer, not a string
-    if "useqtydecimals" in inv_item and inv_item["useqtydecimals"] is not None:
-        try:
-            inv_item["useqtydecimals"] = int(float(inv_item["useqtydecimals"]))
-        except (ValueError, TypeError):
-            pass
+    # These fields must always be integers, not strings
+    for _int_key in ("useqtydecimals", "qtypercase"):
+        if _int_key in inv_item and inv_item[_int_key] is not None:
+            try:
+                inv_item[_int_key] = int(float(inv_item[_int_key]))
+            except (ValueError, TypeError):
+                pass
 
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
