@@ -521,7 +521,7 @@ def build_payload(
     # Key order: sid → dcssid → vendsid → description1 → description2 → attribute → itemsize
     # dcssid and vendsid are always included (can be null, same as sid).
     primary_def: dict = {
-        "sid":    existing_item.get("stylesid") if existing_item else None,
+        "sid":    existing_item.get("sid") if existing_item else None,
         "dcssid": sid_overrides.get("dcssid"),
         "vendsid": sid_overrides.get("vendsid"),
     }
