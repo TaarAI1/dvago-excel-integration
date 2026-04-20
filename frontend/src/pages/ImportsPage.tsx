@@ -114,6 +114,26 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
     ? payloadSentRaw
     : payloadSentRaw != null ? JSON.stringify(payloadSentRaw, null, 2) : null
 
+  // DCS / Vendor debug blobs (always present after the fix).
+  const dcsDebugRaw  = doc.original_data?._dcs_debug
+  const vendDebugRaw = doc.original_data?._vend_debug
+  const dcsDebugStr  = typeof dcsDebugRaw  === 'string' ? dcsDebugRaw  : dcsDebugRaw  != null ? JSON.stringify(dcsDebugRaw,  null, 2) : null
+  const vendDebugStr = typeof vendDebugRaw === 'string' ? vendDebugRaw : vendDebugRaw != null ? JSON.stringify(vendDebugRaw, null, 2) : null
+
+  // Derive a short status label for DCS / vendor from the debug blob
+  const _sidLabel = (debugStr: string | null): { label: string; ok: boolean } => {
+    if (!debugStr) return { label: 'no debug data', ok: false }
+    try {
+      const d = JSON.parse(debugStr)
+      if (d.skipped)    return { label: `skipped — ${d.skipped}`, ok: false }
+      if (d.source === 'cache') return { label: `cache hit · SID ${d.final_sid ?? '?'}`, ok: true }
+      if (d.final_sid)  return { label: `SID ${d.final_sid}`, ok: true }
+      return { label: 'SID not resolved', ok: false }
+    } catch { return { label: 'parse error', ok: false } }
+  }
+  const dcsStatus  = _sidLabel(dcsDebugStr)
+  const vendStatus = _sidLabel(vendDebugStr)
+
   // Pretty-print error
   let errorDisplay = doc.error_message || ''
   try { errorDisplay = JSON.stringify(JSON.parse(doc.error_message || ''), null, 2) } catch { /* raw */ }
@@ -197,6 +217,58 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
                 whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word',
                 lineHeight: 1.6 }}>
                 {payloadSentStr}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+
+        {/* DCS API debug */}
+        {dcsDebugStr && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+              <Box sx={{ width: 7, height: 7, borderRadius: '50%',
+                bgcolor: dcsStatus.ok ? '#22c55e' : '#f59e0b', flexShrink: 0 }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                DCS API
+              </Typography>
+              <Typography sx={{ fontSize: '0.68rem', color: dcsStatus.ok ? '#15803d' : '#b45309',
+                ml: 0.5, fontFamily: 'monospace' }}>
+                {dcsStatus.label}
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+              p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+              <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word',
+                lineHeight: 1.6 }}>
+                {dcsDebugStr}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+
+        {/* Vendor API debug */}
+        {vendDebugStr && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+              <Box sx={{ width: 7, height: 7, borderRadius: '50%',
+                bgcolor: vendStatus.ok ? '#22c55e' : '#f59e0b', flexShrink: 0 }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Vendor API
+              </Typography>
+              <Typography sx={{ fontSize: '0.68rem', color: vendStatus.ok ? '#15803d' : '#b45309',
+                ml: 0.5, fontFamily: 'monospace' }}>
+                {vendStatus.label}
+              </Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+              p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+              <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word',
+                lineHeight: 1.6 }}>
+                {vendDebugStr}
               </Typography>
             </Box>
           </Box>

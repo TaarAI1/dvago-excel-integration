@@ -233,15 +233,23 @@ async def _dcssid(
     dcs_cache: dict, sbs_cache: dict,
     oc: dict, http: httpx.AsyncClient,
     base_url: str, auth_session: str,
+    debug: Optional[dict] = None,
 ) -> Optional[str]:
     if not dcs_code:
+        if debug is not None:
+            debug.update({"dcs_code": "(empty)", "skipped": "DCS_CODE column missing or empty"})
         return None
     if dcs_code in dcs_cache:
+        if debug is not None:
+            debug.update({"dcs_code": dcs_code, "source": "cache", "final_sid": dcs_cache[dcs_code]})
         return dcs_cache[dcs_code]
 
     sid = await _oracle_scalar(
         f"SELECT sid FROM rps.dcs WHERE dcs_code = '{dcs_code}'", oc
     )
+    if debug is not None:
+        debug.update({"dcs_code": dcs_code, "oracle_found": bool(sid), "oracle_sid": sid})
+
     if not sid:
         sbssid_val = await _sbssid(row.get("SBS_NO", "1"), sbs_cache, oc)
         body = {k: v for k, v in {
@@ -263,13 +271,28 @@ async def _dcssid(
             headers={"Auth-Session": auth_session, "accept": "application/json, version=2",
                      "Content-Type": "application/json"},
         )
-        data = (resp.json().get("data") or [])
-        sid = data[0].get("sid") if data else None
+        try:
+            resp_json = resp.json()
+        except Exception:
+            resp_json = {"raw": resp.text}
+        if debug is not None:
+            debug.update({
+                "api_payload": {"data": [body]},
+                "api_status": resp.status_code,
+                "api_response": resp_json,
+            })
+        api_data = (resp_json.get("data") or []) if isinstance(resp_json, dict) else []
+        sid = api_data[0].get("sid") if api_data else None
         if not sid:
             # Retry Oracle after create
             sid = await _oracle_scalar(
                 f"SELECT sid FROM rps.dcs WHERE dcs_code = '{dcs_code}'", oc
             )
+            if debug is not None:
+                debug["oracle_retry_sid"] = sid
+
+    if debug is not None:
+        debug["final_sid"] = sid
     dcs_cache[dcs_code] = sid
     return sid
 
@@ -279,15 +302,23 @@ async def _vendsid(
     vend_cache: dict, sbs_cache: dict,
     oc: dict, http: httpx.AsyncClient,
     base_url: str, auth_session: str,
+    debug: Optional[dict] = None,
 ) -> Optional[str]:
     if not vend_code:
+        if debug is not None:
+            debug.update({"vend_code": "(empty)", "skipped": "VEND_CODE column missing or empty"})
         return None
     if vend_code in vend_cache:
+        if debug is not None:
+            debug.update({"vend_code": vend_code, "source": "cache", "final_sid": vend_cache[vend_code]})
         return vend_cache[vend_code]
 
     sid = await _oracle_scalar(
         f"SELECT sid FROM rps.vendor WHERE vend_code = '{vend_code}'", oc
     )
+    if debug is not None:
+        debug.update({"vend_code": vend_code, "oracle_found": bool(sid), "oracle_sid": sid})
+
     if not sid:
         sbssid_val = await _sbssid(row.get("SBS_NO", "1"), sbs_cache, oc)
         body = {k: v for k, v in {
@@ -304,12 +335,27 @@ async def _vendsid(
             headers={"Auth-Session": auth_session, "accept": "application/json, version=2",
                      "Content-Type": "application/json"},
         )
-        data = (resp.json().get("data") or [])
-        sid = data[0].get("sid") if data else None
+        try:
+            resp_json = resp.json()
+        except Exception:
+            resp_json = {"raw": resp.text}
+        if debug is not None:
+            debug.update({
+                "api_payload": {"data": [body]},
+                "api_status": resp.status_code,
+                "api_response": resp_json,
+            })
+        api_data = (resp_json.get("data") or []) if isinstance(resp_json, dict) else []
+        sid = api_data[0].get("sid") if api_data else None
         if not sid:
             sid = await _oracle_scalar(
                 f"SELECT sid FROM rps.vendor WHERE vend_code = '{vend_code}'", oc
             )
+            if debug is not None:
+                debug["oracle_retry_sid"] = sid
+
+    if debug is not None:
+        debug["final_sid"] = sid
     vend_cache[vend_code] = sid
     return sid
 
@@ -503,6 +549,8 @@ async def process_row(
     upc = row.get("UPC", "")
     result: dict = {"upc": upc, "action": None, "sid": None, "ok": False, "error": None,
                     "description": row.get("DESCRIPTION1") or row.get("DESCRIPTION") or ""}
+    dcs_debug: dict = {}
+    vend_debug: dict = {}
     try:
         dcs_code  = str(row.get("DCS_CODE")  or "").strip()
         vend_code = str(row.get("VEND_CODE") or "").strip()
@@ -517,12 +565,14 @@ async def process_row(
 
         # ── 1. DCS ───────────────────────────────────────────────────────────
         dcssid_val = await _dcssid(
-            dcs_code, row, dcs_cache, sbs_cache, oc, http, base_url, auth_session
+            dcs_code, row, dcs_cache, sbs_cache, oc, http, base_url, auth_session,
+            debug=dcs_debug,
         )
 
         # ── 2. Vendor ────────────────────────────────────────────────────────
         vendsid_val = await _vendsid(
-            vend_code, row, vend_cache, sbs_cache, oc, http, base_url, auth_session
+            vend_code, row, vend_cache, sbs_cache, oc, http, base_url, auth_session,
+            debug=vend_debug,
         )
 
         # ── 3. Tax + subsidiary ──────────────────────────────────────────────
@@ -544,13 +594,17 @@ async def process_row(
         )
         check_data = check_resp.json().get("data") or []
 
-        # Build SID overrides dict — only include non-None values
-        sid_overrides = {k: v for k, v in {
-            "dcssid":     dcssid_val,
-            "vendsid":    vendsid_val,
-            "taxcodesid": taxcodesid_val,
-            "sbssid":     sbssid_val,
-        }.items() if v is not None}
+        # dcssid and vendsid are always included (null is valid and expected in both
+        # PrimaryItemDefinition and InventoryItems).  taxcodesid / sbssid are only
+        # included when resolved because sbssid has a per-update fallback below.
+        sid_overrides: dict = {
+            "dcssid":  dcssid_val,   # always present, may be None
+            "vendsid": vendsid_val,  # always present, may be None
+        }
+        if taxcodesid_val is not None:
+            sid_overrides["taxcodesid"] = taxcodesid_val
+        if sbssid_val is not None:
+            sid_overrides["sbssid"] = sbssid_val
 
         if len(check_data) > 0:
             existing = check_data[0]
@@ -593,6 +647,8 @@ async def process_row(
             result.update({
                 "action": action, "sid": sid, "ok": True,
                 "api_response": save_json,
+                "_dcs_debug": dcs_debug,
+                "_vend_debug": vend_debug,
             })
         else:
             result.update({
@@ -600,10 +656,14 @@ async def process_row(
                 "api_response": save_resp.text,
                 "error": save_resp.text,
                 "_payload_sent": {"data": [payload]},   # full request body for UI display
+                "_dcs_debug": dcs_debug,
+                "_vend_debug": vend_debug,
             })
 
     except Exception as exc:
         result["error"] = str(exc)
+        result["_dcs_debug"] = dcs_debug
+        result["_vend_debug"] = vend_debug
 
     return result
 
@@ -622,12 +682,19 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
     # Store the serialisable row dict (convert datetime → str)
     safe_row = {k: (_to_json(v)) for k, v in row.items()}
 
+    import json as _json
+
     # On failure, embed the sent payload so the UI can show it alongside the error.
     # Stored as a JSON string (not a nested object) to preserve key insertion order
     # when retrieved from PostgreSQL JSONB.
     if not ok and result.get("_payload_sent"):
-        import json as _json
         safe_row["_payload_sent"] = _json.dumps(result["_payload_sent"], indent=2, ensure_ascii=False)
+
+    # Always store DCS / vendor debug so the UI can show what happened to each SID.
+    if result.get("_dcs_debug"):
+        safe_row["_dcs_debug"] = _json.dumps(result["_dcs_debug"], indent=2, ensure_ascii=False)
+    if result.get("_vend_debug"):
+        safe_row["_vend_debug"] = _json.dumps(result["_vend_debug"], indent=2, ensure_ascii=False)
 
     async with get_session() as session:
         async with session.begin():
