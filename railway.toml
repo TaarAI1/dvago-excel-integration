@@ -1,31 +1,8 @@
+# Railway monorepo config.
+# In the Railway dashboard each service must set its own Root Directory:
+#   API service      → Root Directory: /   (repo root)   Dockerfile: Dockerfile
+#   Frontend service → Root Directory: /frontend          Dockerfile: Dockerfile
+
 [build]
   builder = "DOCKERFILE"
-
-# Railway uses this file to define multiple services from one repo.
-# Each service is deployed separately in the Railway dashboard
-# by pointing to the correct Dockerfile path.
-
-# ── Service: api ────────────────────────────────────────────────────────────────
-# Root: /backend
-# Dockerfile: /backend/Dockerfile
-# Start command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-
-# ── Service: frontend ───────────────────────────────────────────────────────────
-# Root: /frontend
-# Dockerfile: /frontend/Dockerfile
-# Environment variable: API_URL = internal Railway URL of the api service
-
-# ── Required environment variables (set in Railway dashboard) ───────────────────
-# MONGODB_URL        = MongoDB Atlas connection string
-# FTP_HOST, FTP_PORT, FTP_USER, FTP_PASSWORD, FTP_BASE_PATH
-# RETAILPRO_BASE_URL, RETAILPRO_API_KEY, RETAILPRO_CLIENT
-# DOCUMENT_TYPE_ENDPOINTS, DOCUMENT_TYPE_FIELD_MAPS
-# DASHBOARD_USERNAME, DASHBOARD_PASSWORD
-# JWT_SECRET_KEY
-# POLL_CRON_SCHEDULE
-
-# ── Notes ────────────────────────────────────────────────────────────────────────
-# - MongoDB: Use MongoDB Atlas free tier (M0). Railway does not offer native MongoDB.
-# - Both services share the same env var group in Railway for DB/API credentials.
-# - The frontend Nginx config proxies /api/* to the internal api service hostname.
-#   Set the nginx upstream to match Railway's internal service name.
+  dockerfilePath = "Dockerfile"

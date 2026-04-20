@@ -1,11 +1,12 @@
+# syntax=docker/dockerfile:1.4
 # Stage 1: Build React app
 FROM node:20-slim AS builder
 
 WORKDIR /app
-COPY package*.json ./
+COPY --link package*.json ./
 RUN npm ci
 
-COPY . .
+COPY --link . .
 RUN npm run build
 
 # Stage 2: Serve with Nginx

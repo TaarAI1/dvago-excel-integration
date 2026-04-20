@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Root-level Dockerfile — builds the API (backend) service.
 # Build context: repo root.  Railway service Root Directory: / (repo root).
 
@@ -30,12 +31,12 @@ RUN mkdir -p /opt/oracle \
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 
-# Copy requirements first so pip layer is cached independently of source changes
-COPY backend/requirements.txt .
+# --link creates an independent snapshot for each COPY, bypassing the BuildKit
+# cache-key checksum bug that causes "/backend/app: not found" on Railway.
+COPY --link backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source — explicit path avoids BuildKit cache-key bug with COPY dir/
-COPY backend/app ./app
+COPY --link backend/app ./app
 
 EXPOSE 8000
 

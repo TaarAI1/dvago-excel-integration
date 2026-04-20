@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -33,10 +34,10 @@ RUN mkdir -p /opt/oracle \
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 
-COPY requirements.txt .
+COPY --link requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY --link . .
 
 EXPOSE 8000
 
