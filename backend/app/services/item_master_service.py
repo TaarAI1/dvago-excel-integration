@@ -252,14 +252,18 @@ async def _dcssid(
 
     if not sid:
         sbssid_val = await _sbssid(row.get("SBS_NO", "1"), sbs_cache, oc)
+        # d/c/s are derived by splitting dcs_code into 3-char chunks
+        d_part = dcs_code[0:3]
+        c_part = dcs_code[3:6]
+        s_part = dcs_code[6:9]
         body = {k: v for k, v in {
             "originapplication": "RProPrismWeb",
             "active": 1,
             "sbssid": sbssid_val,
             "regional": False,
-            "d": row.get("D_NAME") or "",
-            "c": row.get("C_NAME") or "",
-            "s": row.get("S_NAME") or "",
+            "d": d_part,
+            "c": c_part,
+            "s": s_part,
             "dcscode": dcs_code,
             "dname": row.get("D_NAME") or "",
             "cname": row.get("C_NAME") or "",
