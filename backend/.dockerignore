@@ -1,0 +1,14 @@
+# Build context is backend/ — exclude non-essential files
+tests/
+__pycache__/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+.env
+*.env.local

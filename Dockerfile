@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.4
-# Root-level Dockerfile — builds the API (backend) service.
-# Build context: repo root.  Railway service Root Directory: / (repo root).
+# Root-level Dockerfile — fallback only.
+# PREFERRED: set Railway service Root Directory to /backend and use backend/Dockerfile.
+# This file is only used when Root Directory is / (repo root).
 
 FROM python:3.11-slim
 
@@ -15,11 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# libaio symlink required by Oracle Instant Client on Debian Bookworm
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
            /usr/lib/x86_64-linux-gnu/libaio.so.1 || true
 
-# Oracle Instant Client 19.22 (LTS)
 RUN mkdir -p /opt/oracle \
     && wget --tries=3 --timeout=120 --no-verbose \
         "https://download.oracle.com/otn_software/linux/instantclient/1922000/instantclient-basiclite-linux.x64-19.22.0.0.0dbru.zip" \
@@ -31,12 +30,13 @@ RUN mkdir -p /opt/oracle \
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 
-# --link creates an independent snapshot for each COPY, bypassing the BuildKit
-# cache-key checksum bug that causes "/backend/app: not found" on Railway.
-COPY --link backend/requirements.txt .
+# Copy requirements separately so pip cache layer is reused on code-only changes
+COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --link backend/app ./app
+# Copy app source — separate RUN between COPYs prevents BuildKit from merging them
+RUN echo "Preparing app source"
+COPY backend/app ./app
 
 EXPOSE 8000
 

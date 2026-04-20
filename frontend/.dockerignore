@@ -1,0 +1,6 @@
+# Build context is frontend/ — exclude non-essential files
+node_modules/
+dist/
+.vite/
+.env
+*.env.local
