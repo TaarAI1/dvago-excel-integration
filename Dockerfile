@@ -30,13 +30,13 @@ RUN mkdir -p /opt/oracle \
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 
-# Copy requirements separately so pip cache layer is reused on code-only changes
-COPY backend/requirements.txt ./requirements.txt
+# requirements.txt and app_bundle.tar.gz live at the repo root so Railway's
+# root-service build context (which excludes backend/ and frontend/ sub-services)
+# can still find them.
+COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Railway's build context excludes subdirectories (backend/app/) but includes files
-# (backend/requirements.txt, backend/app_bundle.tar.gz). Extract the bundle instead.
-COPY backend/app_bundle.tar.gz ./app_bundle.tar.gz
+COPY app_bundle.tar.gz ./app_bundle.tar.gz
 RUN tar -xzf app_bundle.tar.gz && rm app_bundle.tar.gz
 
 EXPOSE 8000
