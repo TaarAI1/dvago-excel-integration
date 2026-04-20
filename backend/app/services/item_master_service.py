@@ -756,7 +756,7 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     Core pipeline shared by Excel and CSV paths:
       auth (once) → per-row processing with shared caches → persist each row.
     """
-    from app.services.retailpro_auth import get_auth_session
+    from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
     if not rows:
@@ -773,6 +773,9 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session = await get_auth_session()
 
+    # Activate the session immediately after obtaining it
+    await sit_session(base_url, auth_session)
+
     dcs_cache:          dict = {}
     vend_cache:         dict = {}
     tax_cache:          dict = {}
@@ -781,32 +784,36 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     store_cache:        dict = {}
 
     results: list[dict] = []
-    async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
-        for row in rows:
-            row_result = await process_row(
-                row=row,
-                auth_session=auth_session,
-                oc=oc,
-                base_url=base_url,
-                http=http,
-                dcs_cache=dcs_cache,
-                vend_cache=vend_cache,
-                tax_cache=tax_cache,
-                sbs_cache=sbs_cache,
-                pref_reason_cache=pref_reason_cache,
-                store_cache=store_cache,
-            )
-            results.append(row_result)
-            try:
-                await _persist_result(row, row_result, source_file)
-            except Exception as db_exc:
-                logger.warning("DB persist failed for UPC %s: %s", row_result["upc"], db_exc)
-            logger.info(
-                "Item %s: %s %s",
-                row_result["upc"],
-                row_result["action"],
-                "✓" if row_result["ok"] else f"✗ {row_result['error']}",
-            )
+    try:
+        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
+            for row in rows:
+                row_result = await process_row(
+                    row=row,
+                    auth_session=auth_session,
+                    oc=oc,
+                    base_url=base_url,
+                    http=http,
+                    dcs_cache=dcs_cache,
+                    vend_cache=vend_cache,
+                    tax_cache=tax_cache,
+                    sbs_cache=sbs_cache,
+                    pref_reason_cache=pref_reason_cache,
+                    store_cache=store_cache,
+                )
+                results.append(row_result)
+                try:
+                    await _persist_result(row, row_result, source_file)
+                except Exception as db_exc:
+                    logger.warning("DB persist failed for UPC %s: %s", row_result["upc"], db_exc)
+                logger.info(
+                    "Item %s: %s %s",
+                    row_result["upc"],
+                    row_result["action"],
+                    "✓" if row_result["ok"] else f"✗ {row_result['error']}",
+                )
+    finally:
+        # Always destroy the session after all rows are processed (or on error)
+        await stand_session(base_url, auth_session)
 
     created = sum(1 for r in results if r["ok"] and r["action"] == "created")
     updated = sum(1 for r in results if r["ok"] and r["action"] == "updated")

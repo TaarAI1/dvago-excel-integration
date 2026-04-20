@@ -77,3 +77,33 @@ async def get_auth_session(
 
     logger.info("RetailPro Auth-Session obtained.")
     return session
+
+
+async def sit_session(base_url: str, auth_session: str) -> None:
+    """
+    Activate the session by calling GET /v1/rest/sit?ws=webclient.
+    Must be called immediately after get_auth_session().
+    Errors are logged but do not abort the import.
+    """
+    url = f"{base_url.rstrip('/')}/v1/rest/sit?ws=webclient"
+    async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
+        try:
+            resp = await client.get(url, headers={"Auth-Session": auth_session, "Accept": "application/json"})
+            logger.info("RetailPro sit response: HTTP %s", resp.status_code)
+        except Exception as exc:
+            logger.warning("RetailPro sit call failed: %s", exc)
+
+
+async def stand_session(base_url: str, auth_session: str) -> None:
+    """
+    Destroy the session by calling GET /v1/rest/stand?ws=webclient.
+    Must be called after all posting is complete.
+    Errors are logged but do not abort the import.
+    """
+    url = f"{base_url.rstrip('/')}/v1/rest/stand?ws=webclient"
+    async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
+        try:
+            resp = await client.get(url, headers={"Auth-Session": auth_session, "Accept": "application/json"})
+            logger.info("RetailPro stand response: HTTP %s", resp.status_code)
+        except Exception as exc:
+            logger.warning("RetailPro stand call failed: %s", exc)
