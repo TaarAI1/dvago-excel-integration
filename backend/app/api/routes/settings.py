@@ -122,6 +122,54 @@ async def run_oracle_query(body: OracleQueryRequest, _: str = Depends(get_curren
         return {"ok": False, "columns": [], "rows": [], "row_count": 0, "error": str(exc)}
 
 
+class SmtpTestRequest(BaseModel):
+    host: str
+    port: int = 587
+    username: str = ""
+    password: str = ""
+    use_tls: bool = True
+    from_email: str = ""
+    to_email: str = ""
+
+
+@router.post("/test/smtp")
+async def test_smtp(body: SmtpTestRequest, _: str = Depends(get_current_user)):
+    """Send a test email using the provided SMTP credentials."""
+    def _send():
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        msg = MIMEMultipart()
+        msg["From"] = body.from_email
+        msg["To"] = body.to_email
+        msg["Subject"] = "Test Email — Dvago Integration"
+        msg.attach(MIMEText(
+            "This is a test email from the Dvago Excel Integration system.\n\n"
+            "Please do not reply to this message.",
+            "plain",
+        ))
+
+        if body.use_tls:
+            server = smtplib.SMTP(body.host, body.port, timeout=15)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        else:
+            server = smtplib.SMTP_SSL(body.host, body.port, timeout=15)
+
+        if body.username:
+            server.login(body.username, body.password)
+        server.sendmail(body.from_email, [body.to_email], msg.as_string())
+        server.quit()
+
+    try:
+        await asyncio.to_thread(_send)
+        return {"ok": True, "message": f"Test email sent successfully to {body.to_email}."}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @router.post("/test/retailpro")
 async def test_retailpro(body: RetailProAuthRequest, _: str = Depends(get_current_user)):
     """

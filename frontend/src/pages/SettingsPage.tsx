@@ -23,14 +23,16 @@ function TabPanel({ value, index, children }: { value: number; index: number; ch
   return value === index ? <Box sx={{ pt: 2.5 }}>{children}</Box> : null
 }
 
-function SettingField({ settingKey, meta, value, onChange }:
-  { settingKey: string; meta: SettingMeta; value: string; onChange: (k: string, v: string) => void }) {
+function SettingField({ settingKey, meta, value, onChange, error, helperText }:
+  { settingKey: string; meta: SettingMeta; value: string; onChange: (k: string, v: string) => void
+    error?: boolean; helperText?: string }) {
   const [show, setShow] = useState(false)
   const isMulti = settingKey.includes('sql') || settingKey.includes('endpoints') || settingKey.includes('field_maps')
   return (
     <TextField label={meta.label} value={value} onChange={(e) => onChange(settingKey, e.target.value)}
       fullWidth multiline={isMulti} rows={isMulti ? 5 : undefined}
       type={meta.is_sensitive && !show ? 'password' : 'text'} size="small"
+      error={error} helperText={helperText}
       slotProps={meta.is_sensitive ? {
         input: {
           endAdornment: (
@@ -221,6 +223,47 @@ export default function SettingsPage() {
     error?: string
   } | null>(null)
 
+  // SMTP
+  const SMTP_REQUIRED = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_password', 'smtp_from_email', 'smtp_to_email']
+  const [smtpErrors, setSmtpErrors]       = useState<Record<string, string>>({})
+  const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null)
+  const [smtpTesting, setSmtpTesting]     = useState(false)
+
+  const validateSmtp = (): boolean => {
+    const errs: Record<string, string> = {}
+    for (const k of SMTP_REQUIRED) if (!g(k).trim()) errs[k] = 'Required'
+    setSmtpErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
+  const saveSmtp = () => {
+    if (!validateSmtp()) { setSaveError('Please fill in all required SMTP fields.'); return }
+    setSaveError('')
+    save('smtp')
+  }
+
+  const testSmtp = async () => {
+    if (!validateSmtp()) return
+    setSmtpTesting(true)
+    setSmtpTestResult(null)
+    try {
+      const r = await apiClient.post('/api/settings/test/smtp', {
+        host:       g('smtp_host'),
+        port:       parseInt(g('smtp_port') || '587'),
+        username:   g('smtp_username'),
+        password:   g('smtp_password'),
+        use_tls:    g('smtp_use_tls') !== 'false',
+        from_email: g('smtp_from_email'),
+        to_email:   g('smtp_to_email'),
+      })
+      setSmtpTestResult(r.data)
+    } catch {
+      setSmtpTestResult({ ok: false, error: 'Request failed' })
+    } finally {
+      setSmtpTesting(false)
+    }
+  }
+
   // Oracle query panel
   const [queryOpen, setQueryOpen] = useState(false)
   const [queryText, setQueryText] = useState('')
@@ -302,10 +345,11 @@ export default function SettingsPage() {
     }
   }
 
-  const F = (key: string, label: string, sensitive = false) => (
+  const F = (key: string, label: string, sensitive = false, err?: string) => (
     <SettingField settingKey={key}
       meta={{ label, value: g(key), is_sensitive: sensitive, updated_at: null }}
-      value={g(key)} onChange={set} />
+      value={g(key)} onChange={(k, v) => { set(k, v); if (err) setSmtpErrors(p => ({ ...p, [k]: '' })) }}
+      error={!!err} helperText={err} />
   )
 
   const SaveBtn = ({ cat }: { cat: string }) => (
@@ -531,20 +575,14 @@ export default function SettingsPage() {
           {/* ── SMTP ── */}
           <TabPanel value={tab} index={5}>
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 8 }}>{F('smtp_host', 'SMTP Host')}</Grid>
-              <Grid size={{ xs: 12, sm: 4 }}>{F('smtp_port', 'Port')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_username', 'Username')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_password', 'Password', true)}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('smtp_host',     'SMTP Host *',   false, smtpErrors['smtp_host'])}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('smtp_port',     'Port *',         false, smtpErrors['smtp_port'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_username', 'Username *',     false, smtpErrors['smtp_username'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_password', 'Password *',     true,  smtpErrors['smtp_password'])}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  select
-                  label="Use TLS"
-                  value={g('smtp_use_tls')}
+                <TextField select label="Use TLS" value={g('smtp_use_tls')}
                   onChange={(e) => set('smtp_use_tls', e.target.value)}
-                  fullWidth
-                  size="small"
-                  slotProps={{ select: { native: true } }}
-                >
+                  fullWidth size="small" slotProps={{ select: { native: true } }}>
                   <option value="true">Enabled</option>
                   <option value="false">Disabled</option>
                 </TextField>
@@ -556,14 +594,47 @@ export default function SettingsPage() {
             </Divider>
 
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_from_email', 'From Email')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email', 'To Email')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_reply_to', 'Reply To')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_cc_email', 'CC Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_from_email', 'From Email *', false, smtpErrors['smtp_from_email'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email',   'To Email *',   false, smtpErrors['smtp_to_email'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_reply_to',   'Reply To')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_cc_email',   'CC Email')}</Grid>
             </Grid>
 
             <Divider sx={{ my: 2.5 }} />
-            <SaveBtn cat="smtp" />
+
+            {/* Action buttons */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+              <Button variant="contained" size="small"
+                startIcon={saveMutation.isPending ? <CircularProgress size={12} color="inherit" /> : <SaveIcon sx={{ fontSize: 15 }} />}
+                onClick={saveSmtp} disabled={saveMutation.isPending}
+                sx={{ height: 32, fontSize: '0.8rem' }}>
+                Save
+              </Button>
+
+              <Button variant="outlined" size="small"
+                startIcon={smtpTesting ? <CircularProgress size={12} /> : <WifiIcon sx={{ fontSize: 15 }} />}
+                onClick={testSmtp} disabled={smtpTesting}
+                sx={{ height: 32, fontSize: '0.8rem' }}>
+                {smtpTesting ? 'Sending…' : 'Send Test Email'}
+              </Button>
+            </Box>
+
+            {/* Test email result */}
+            {smtpTestResult && (
+              <Box sx={{
+                mt: 1.5, p: 1.25, borderRadius: '6px', display: 'flex', alignItems: 'flex-start', gap: 1,
+                bgcolor: smtpTestResult.ok ? '#f0fdf4' : '#fef2f2',
+                border: '1px solid', borderColor: smtpTestResult.ok ? '#d1fae5' : '#fee2e2',
+              }}>
+                {smtpTestResult.ok
+                  ? <CheckCircleOutlinedIcon sx={{ fontSize: 15, color: '#15803d', mt: '1px', flexShrink: 0 }} />
+                  : <ErrorOutlinedIcon      sx={{ fontSize: 15, color: '#b91c1c', mt: '1px', flexShrink: 0 }} />}
+                <Typography sx={{ fontSize: '0.78rem', color: smtpTestResult.ok ? '#166534' : '#7f1d1d',
+                  wordBreak: 'break-word', lineHeight: 1.5 }}>
+                  {smtpTestResult.ok ? smtpTestResult.message : (smtpTestResult.error || 'Failed to send test email.')}
+                </Typography>
+              </Box>
+            )}
           </TabPanel>
         </Box>
       </Box>
