@@ -479,6 +479,13 @@ def build_payload(
     # Inject computed SIDs (overwrite whatever came from Excel)
     inv_item.update(sid_overrides)
 
+    # cost must always be a double (float), not a string
+    if "cost" in inv_item and inv_item["cost"] is not None:
+        try:
+            inv_item["cost"] = float(inv_item["cost"])
+        except (ValueError, TypeError):
+            pass
+
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
     if existing_item:
