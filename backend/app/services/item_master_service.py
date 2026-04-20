@@ -653,16 +653,21 @@ async def process_row(
         )
         save_json = save_resp.json()
         saved_data = save_json.get("data") or []
-        # Response mirrors the new structure: data[0].InventoryItems[0].sid
+        api_errors = save_json.get("errors")
+
+        # Success: errors is null AND data array is non-empty
+        ok = (api_errors is None) and (len(saved_data) > 0)
+
+        # Extract SID from data[0].inventoryitems[0].sid (lowercase keys in response)
         sid = None
         if saved_data:
-            inv_items = saved_data[0].get("InventoryItems") or []
+            inv_items = saved_data[0].get("inventoryitems") or []
             if inv_items:
                 sid = inv_items[0].get("sid")
             if not sid:
-                sid = saved_data[0].get("sid")
+                sid = saved_data[0].get("newstylesid")
 
-        if save_resp.status_code in (200, 201) and sid:
+        if ok:
             result.update({
                 "action": action, "sid": sid, "ok": True,
                 "api_response": save_json,
@@ -672,9 +677,9 @@ async def process_row(
         else:
             result.update({
                 "action": action, "ok": False,
-                "api_response": save_resp.text,
+                "api_response": save_json,
                 "error": save_resp.text,
-                "_payload_sent": {"data": [payload]},   # full request body for UI display
+                "_payload_sent": {"data": [payload]},
                 "_dcs_debug": dcs_debug,
                 "_vend_debug": vend_debug,
             })
