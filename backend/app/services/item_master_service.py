@@ -38,7 +38,7 @@ MAIN_FIELD_MAP: dict[str, str] = {
     "CONTROLLER_SID": "controllersid",
     "ORIGIN_APPLICATION": "originapplication",
     "POST_DATE": "postdate",
-    "ROW_VERSION": "rowversion",
+    # "ROW_VERSION": "rowversion",  # excluded from payload
     "TENANT_SID": "tenantsid",
     "INVN_ITEM_UID": "invnitemuid",
     "SBS_SID": "sbssid",
@@ -461,15 +461,8 @@ def build_payload(
 
     if existing_item:
         inv_item["sid"] = existing_item.get("sid")
-        inv_item["rowversion"] = existing_item.get("rowversion")
     else:
         inv_item["sid"] = None
-        rv = row.get("ROW_VERSION")
-        if rv is not None:
-            try:
-                inv_item["rowversion"] = int(rv)
-            except (ValueError, TypeError):
-                inv_item["rowversion"] = rv
 
     # Map Excel columns → JSON fields (skip None and empty strings)
     for col, json_key in MAIN_FIELD_MAP.items():
@@ -543,11 +536,9 @@ def build_payload(
 
     # ── Outer wrapper (OriginApplication + PrimaryItemDefinition always first) ─
     outer: dict = {
-        "OriginApplication":    "RProPrismWeb",
+        "OriginApplication":     "RProPrismWeb",
         "PrimaryItemDefinition": primary_def,
         "InventoryItems":        [inv_item],
-        "SavingStyle":           False,
-        "localdate":             now_pkt().strftime("%Y-%m-%dT%H:%M:%S"),
         "UpdateStyleDefinition": False,
         "UpdateStyleCost":       False,
         "UpdateStylePrice":      False,
