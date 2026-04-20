@@ -23,17 +23,25 @@ interface LogEntry {
   metadata?: Record<string, unknown>
 }
 
-// ── Datetime-local helpers ─────────────────────────────────────────────────────
+// ── Datetime helpers ───────────────────────────────────────────────────────────
 
+/** Format a Date as "YYYY-MM-DDTHH:MM" for a datetime-local input value. */
 function toDatetimeLocal(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function last24hFrom(): string {
+/** Return a plain ISO string (no Z / timezone) that Python fromisoformat() accepts. */
+function toApiIso(datetimeLocalValue: string): string {
+  // datetime-local gives "YYYY-MM-DDTHH:MM"; append ":00" for seconds
+  return datetimeLocalValue.length === 16 ? datetimeLocalValue + ':00' : datetimeLocalValue
+}
+
+/** ISO string for "now − 24 h" (no timezone suffix). */
+function last24hIso(): string {
   const d = new Date()
-  d.setHours(d.getHours() - 24)
-  return toDatetimeLocal(d)
+  d.setTime(d.getTime() - 24 * 60 * 60 * 1000)
+  return toApiIso(toDatetimeLocal(d))
 }
 
 // ── Log row ────────────────────────────────────────────────────────────────────
@@ -78,24 +86,28 @@ export default function ActivityLog() {
   const [filterType, setFilterType]     = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]             = useState('')
-  const [dateFrom, setDateFrom]         = useState<string>(last24hFrom)
-  const [dateTo, setDateTo]             = useState<string>('')
+  const [dateFrom, setDateFrom]         = useState<string>('')   // empty = use last 24h automatically
+  const [dateTo, setDateTo]             = useState<string>('')   // empty = no upper bound
   // SSE live entries that arrived after the last historical fetch
   const [extraEntries, setExtraEntries] = useState<LogEntry[]>([])
 
   const topRef = useRef<HTMLDivElement>(null)
 
   // ── Historical query (server-side type/status/date filters) ─────────────────
+  // When no dateFrom is set by the user, default to last 24 h automatically.
+  const effectiveDateFrom = dateFrom ? toApiIso(dateFrom) : last24hIso()
+  const effectiveDateTo   = dateTo   ? toApiIso(dateTo)   : ''
+
   const queryParams = {
     limit: 500,
-    ...(dateFrom     ? { date_from: new Date(dateFrom).toISOString() } : {}),
-    ...(dateTo       ? { date_to:   new Date(dateTo).toISOString()   } : {}),
-    ...(filterType   ? { activity_type: filterType }                  : {}),
-    ...(filterStatus ? { status: filterStatus }                       : {}),
+    date_from: effectiveDateFrom,
+    ...(effectiveDateTo ? { date_to: effectiveDateTo } : {}),
+    ...(filterType   ? { activity_type: filterType } : {}),
+    ...(filterStatus ? { status: filterStatus }       : {}),
   }
 
   const { data: historicalData, isLoading } = useQuery({
-    queryKey: ['logs', dateFrom, dateTo, filterType, filterStatus],
+    queryKey: ['logs', effectiveDateFrom, effectiveDateTo, filterType, filterStatus],
     queryFn:  () => apiClient.get('/api/logs', { params: queryParams }).then(r => r.data),
     refetchInterval: 30_000,
   })
@@ -140,8 +152,9 @@ export default function ActivityLog() {
     window.open(`/api/logs/export?fmt=csv&token=${token}`, '_blank')
   }
 
+  // Clearing both inputs resets to the automatic last-24h default
   const applyLast24h = () => {
-    setDateFrom(last24hFrom())
+    setDateFrom('')
     setDateTo('')
   }
 
