@@ -495,6 +495,14 @@ def build_payload(
             except (ValueError, TypeError):
                 pass
 
+    # regional and active: 0 → false, 1 → true
+    for _bool_key in ("regional", "active"):
+        if _bool_key in inv_item and inv_item[_bool_key] is not None:
+            try:
+                inv_item[_bool_key] = bool(int(float(inv_item[_bool_key])))
+            except (ValueError, TypeError):
+                pass
+
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
     if existing_item:
