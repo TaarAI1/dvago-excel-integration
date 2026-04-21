@@ -33,10 +33,10 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 # requirements.txt and app_bundle.tar.gz live at the repo root so Railway's
 # root-service build context (which excludes backend/ and frontend/ sub-services)
 # can still find them.
-COPY requirements.txt ./requirements.txt
+COPY --link requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app_bundle.tar.gz ./app_bundle.tar.gz
+COPY --link app_bundle.tar.gz ./app_bundle.tar.gz
 RUN tar -xzf app_bundle.tar.gz && rm app_bundle.tar.gz
 
 EXPOSE 8000
