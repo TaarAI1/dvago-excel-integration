@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 async def _seed_users():
-    """Ensure the admin user from env vars exists. Creates it if missing."""
+    """Ensure the admin user from env vars exists with a fresh hash."""
     from sqlalchemy import select
     from app.db.postgres import get_session
     from app.models.user import User
     from app.core.security import get_password_hash
     import uuid
+
+    new_hash = get_password_hash(settings.dashboard_password)
 
     async with get_session() as session:
         result = await session.execute(
@@ -35,10 +37,18 @@ async def _seed_users():
                 session.add(User(
                     id=uuid.uuid4(),
                     username=settings.dashboard_username,
-                    hashed_password=get_password_hash(settings.dashboard_password),
+                    hashed_password=new_hash,
                     is_active=True,
                 ))
         logger.info(f"Seeded admin user: {settings.dashboard_username}")
+    else:
+        # Re-hash with the current bcrypt implementation to fix any passlib leftovers
+        async with get_session() as session:
+            async with session.begin():
+                user = await session.get(User, existing.id)
+                user.hashed_password = new_hash
+                user.is_active = True
+        logger.info(f"Refreshed password hash for admin user: {settings.dashboard_username}")
 
 
 async def _seed_settings():

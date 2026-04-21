@@ -1,31 +1,25 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import bcrypt as _bcrypt_mod
 
-# passlib 1.7.4 crashes on import with bcrypt >= 4.0 because __about__ was removed.
-# Patch it in before passlib loads so the version check doesn't blow up.
-if not hasattr(_bcrypt_mod, "__about__"):
-    class _FakeAbout:
-        __version__ = getattr(_bcrypt_mod, "__version__", "4.0.1")
-    _bcrypt_mod.__about__ = _FakeAbout()
-
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"),
+        hashed_password.encode("utf-8"),
+    )
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
