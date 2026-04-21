@@ -9,6 +9,7 @@ import UsersPage from './pages/UsersPage'
 import SettingsPage from './pages/SettingsPage'
 import ItemMasterPage from './pages/ItemMasterPage'
 import ImportsPage from './pages/ImportsPage'
+import ExportsPage from './pages/ExportsPage'
 import NetworkPage from './pages/NetworkPage'
 
 const queryClient = new QueryClient({
@@ -160,6 +161,7 @@ function AppLayout() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/item-master" element={<ItemMasterPage />} />
           <Route path="/imports" element={<ImportsPage />} />
+          <Route path="/exports" element={<ExportsPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/network" element={<NetworkPage />} />

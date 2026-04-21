@@ -11,13 +11,15 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import StorageIcon from '@mui/icons-material/Storage'
 import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined'
 import RouterOutlinedIcon from '@mui/icons-material/RouterOutlined'
+import CloudDownloadOutlinedIcon from '@mui/icons-material/CloudDownloadOutlined'
 
 const NAV_LINKS = [
-  { label: 'Dashboard', path: '/', icon: <DashboardOutlinedIcon sx={{ fontSize: 16 }} /> },
-  { label: 'Imports', path: '/imports', icon: <InboxOutlinedIcon sx={{ fontSize: 16 }} /> },
-  { label: 'Users', path: '/users', icon: <PeopleOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Dashboard',     path: '/',         icon: <DashboardOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Imports',       path: '/imports',  icon: <InboxOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Exports',       path: '/exports',  icon: <CloudDownloadOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Users',         path: '/users',    icon: <PeopleOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Configuration', path: '/settings', icon: <SettingsOutlinedIcon sx={{ fontSize: 16 }} /> },
-  { label: 'Egress IP', path: '/network', icon: <RouterOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Egress IP',     path: '/network',  icon: <RouterOutlinedIcon sx={{ fontSize: 16 }} /> },
 ]
 
 export default function Navbar() {
