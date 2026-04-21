@@ -3,7 +3,7 @@ import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
   TextField, Select, MenuItem, FormControl, InputLabel,
-  IconButton, Tooltip, Button, Dialog,
+  IconButton, Tooltip, Button, Dialog, DialogTitle,
   DialogContent, DialogActions,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -546,10 +546,398 @@ function ItemMasterTab() {
   )
 }
 
+// ── QTY Adjustment types ──────────────────────────────────────────────────────
+
+interface QtyAdjDoc {
+  id: string
+  source_file: string | null
+  store_code: string | null
+  store_name: string | null
+  store_sid: string | null
+  sbs_sid: string | null
+  adj_sid: string | null
+  item_count: number
+  posted_count: number
+  error_count: number
+  status: 'posted' | 'partial' | 'error' | 'pending'
+  error_message: string | null
+  api_create_payload: unknown
+  api_create_response: unknown
+  api_items_payload: unknown
+  api_items_response: unknown
+  api_get_response: unknown
+  api_finalize_payload: unknown
+  api_finalize_response: unknown
+  items_data: Array<{ upc: string; adj_value: number; item_sid: string | null; ok: boolean; error: string | null }> | null
+  created_at: string
+  posted_at: string | null
+}
+
+interface QtyAdjBatch {
+  source_file: string
+  doc_count: number
+  total_items: number
+  posted_items: number
+  error_items: number
+  latest: string | null
+  posted_docs: number
+  error_docs: number
+}
+
+// ── QTY Adj status chip ───────────────────────────────────────────────────────
+
+function AdjStatusChip({ status }: { status: QtyAdjDoc['status'] }) {
+  const map = {
+    posted:  { label: 'Posted',  bg: '#f0fdf4', color: '#15803d', border: '#d1fae5' },
+    partial: { label: 'Partial', bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+    error:   { label: 'Error',   bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' },
+    pending: { label: 'Pending', bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+  }
+  const s = map[status] ?? map.pending
+  return (
+    <Chip label={s.label} size="small"
+      sx={{ height: 20, fontSize: '0.68rem', borderRadius: '4px',
+        bgcolor: s.bg, color: s.color, border: `1px solid ${s.border}` }} />
+  )
+}
+
+// ── QTY Adj detail dialog ─────────────────────────────────────────────────────
+
+function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: () => void }) {
+  if (!doc) return null
+
+  const section = (title: string, data: unknown, color = '#1e293b') => {
+    if (!data) return null
+    let text: string
+    try { text = JSON.stringify(data, null, 2) } catch { text = String(data) }
+    return (
+      <Box sx={{ mx: 3, mb: 2 }}>
+        <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+          textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
+          {title}
+        </Typography>
+        <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+          p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+          <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap', color, wordBreak: 'break-word', lineHeight: 1.6 }}>
+            {text}
+          </Typography>
+        </Box>
+      </Box>
+    )
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth
+      slotProps={{ paper: { sx: { borderRadius: '8px', overflow: 'hidden' } } }}>
+      {/* Header */}
+      <Box sx={{
+        bgcolor: doc.status === 'error' ? '#fef2f2' : doc.status === 'posted' ? '#f0fdf4' : '#fff7ed',
+        borderBottom: `2px solid ${doc.status === 'error' ? '#fecaca' : doc.status === 'posted' ? '#bbf7d0' : '#fed7aa'}`,
+        px: 3, py: 2,
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+          <AdjStatusChip status={doc.status} />
+          <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+            {fmt(doc.created_at)}
+          </Typography>
+        </Box>
+        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827', mt: 0.5 }}>
+          Adjustment Document
+        </Typography>
+        <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
+          Store: {doc.store_name || doc.store_code || '—'} &nbsp;·&nbsp;
+          {doc.item_count} items &nbsp;·&nbsp;
+          {doc.posted_count} posted &nbsp;·&nbsp; {doc.error_count} errors
+        </Typography>
+      </Box>
+
+      <DialogContent sx={{ p: 0, maxHeight: '76vh', overflowY: 'auto' }}>
+        {/* Summary */}
+        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+          <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Summary</Typography>
+          <InfoRow label="Adj SID"     value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.adj_sid || '—'}</Typography>} />
+          <InfoRow label="Store Code"  value={doc.store_code || '—'} />
+          <InfoRow label="Store SID"   value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.store_sid || '—'}</Typography>} />
+          <InfoRow label="Sbs SID"     value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.sbs_sid || '—'}</Typography>} />
+          <InfoRow label="Source File" value={doc.source_file || '—'} />
+          {doc.posted_at && <InfoRow label="Posted At" value={fmt(doc.posted_at)} />}
+        </Box>
+
+        {/* Items table */}
+        {doc.items_data && doc.items_data.length > 0 && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Items</Typography>
+            <Box sx={{ border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                    {['UPC', 'Adj Value', 'Item SID', 'Status'].map(h => (
+                      <TableCell key={h} sx={{ ...thSx, py: 0.5 }}>{h}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {doc.items_data.map((item, i) => (
+                    <TableRow key={i}>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>{item.upc}</TableCell>
+                      <TableCell sx={tdSx}>{item.adj_value}</TableCell>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280' }}>{item.item_sid || '—'}</TableCell>
+                      <TableCell sx={tdSx}>
+                        {item.ok
+                          ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
+                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                        }
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          </Box>
+        )}
+
+        {/* Error */}
+        {doc.error_message && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        {/* API traces */}
+        {section('1. Create Adjustment — Request', doc.api_create_payload)}
+        {section('1. Create Adjustment — Response', doc.api_create_response)}
+        {section('2. Post Items — Request', doc.api_items_payload)}
+        {section('2. Post Items — Response', doc.api_items_response)}
+        {section('3. GET Rowversion — Response', doc.api_get_response)}
+        {section('4. Finalize — Request', doc.api_finalize_payload)}
+        {section('4. Finalize — Response', doc.api_finalize_response)}
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
+        <Button size="small" variant="outlined" onClick={onClose}
+          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── QTY Adjustment tab ────────────────────────────────────────────────────────
+
+function QtyAdjustmentTab() {
+  const qc = useQueryClient()
+  const [selectedBatch, setSelectedBatch] = useState('')
+  const [status, setStatus]               = useState('')
+  const [detail, setDetail]               = useState<QtyAdjDoc | null>(null)
+  const [page, setPage]                   = useState(0)
+  const pageSize                           = 100
+
+  const { data: batches, isFetching: batchFetching } = useQuery<QtyAdjBatch[]>({
+    queryKey: ['qa-batches'],
+    queryFn: () => apiClient.get('/api/qty-adjustment/batches').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  useEffect(() => {
+    if (batches && batches.length > 0 && !selectedBatch)
+      setSelectedBatch(batches[0].source_file)
+  }, [batches, selectedBatch])
+
+  const activeBatch = batches?.find(b => b.source_file === selectedBatch)
+
+  const params: Record<string, string | number> = {
+    limit: pageSize, offset: page * pageSize,
+    ...(selectedBatch ? { source_file: selectedBatch } : {}),
+    ...(status        ? { status }                     : {}),
+  }
+
+  const { data, isLoading, isFetching } = useQuery<{ total: number; items: QtyAdjDoc[] }>({
+    queryKey: ['qa-docs', params],
+    queryFn: () => apiClient.get('/api/qty-adjustment/docs', { params }).then(r => r.data),
+    refetchInterval: 30_000,
+    enabled: !!selectedBatch,
+  })
+
+  const docs      = data?.items ?? []
+  const totalPages = Math.ceil((data?.total ?? 0) / pageSize)
+
+  return (
+    <Box>
+      {/* Batch selector */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <FolderOutlinedIcon sx={{ fontSize: 15, color: '#9ca3af' }} />
+        <Typography sx={{ fontSize: '0.72rem', color: '#374151', fontWeight: 600 }}>Batch:</Typography>
+        <FormControl size="small" sx={{ minWidth: 280 }}>
+          <Select value={selectedBatch} displayEmpty
+            onChange={e => { setSelectedBatch(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}
+            renderValue={v => {
+              if (!v) return <em style={{ color: '#9ca3af' }}>Select a batch…</em>
+              const b = batches?.find(x => x.source_file === v)
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>{v}</span>
+                  {b && <Typography component="span" sx={{ fontSize: '0.65rem', color: '#9ca3af', ml: 0.5 }}>
+                    ({b.doc_count} docs · {fmt(b.latest)})
+                  </Typography>}
+                </Box>
+              )
+            }}>
+            {(batches ?? []).map(b => (
+              <MenuItem key={b.source_file} value={b.source_file}>
+                <Box sx={{ width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 500 }}>{b.source_file}</Typography>
+                    <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>{fmt(b.latest)}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, mt: 0.25 }}>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#15803d' }}>✓ {b.posted_docs} posted</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#b91c1c' }}>✗ {b.error_docs} errors</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#6b7280' }}>{b.doc_count} docs · {b.total_items} items</Typography>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {batchFetching && <CircularProgress size={12} />}
+      </Box>
+
+      {/* Pills + toolbar */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <Pill label="adj docs"     value={activeBatch?.doc_count    ?? 0} color="#3b82f6" />
+        <Pill label="posted docs"  value={activeBatch?.posted_docs  ?? 0} color="#22c55e" />
+        <Pill label="error docs"   value={activeBatch?.error_docs   ?? 0} color="#ef4444" />
+        <Pill label="total items"  value={activeBatch?.total_items  ?? 0} color="#6b7280" />
+        <Pill label="posted items" value={activeBatch?.posted_items ?? 0} color="#22c55e" />
+        {isFetching && <CircularProgress size={13} sx={{ ml: 0.5 }} />}
+        <Box sx={{ flexGrow: 1 }} />
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel sx={{ fontSize: '0.78rem' }}>Status</InputLabel>
+          <Select value={status} label="Status"
+            onChange={e => { setStatus(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}>
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="posted">Posted</MenuItem>
+            <MenuItem value="partial">Partial</MenuItem>
+            <MenuItem value="error">Error</MenuItem>
+          </Select>
+        </FormControl>
+        <Tooltip title="Refresh">
+          <IconButton size="small"
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['qa-docs'] })
+              qc.invalidateQueries({ queryKey: ['qa-batches'] })
+            }}
+            sx={{ borderRadius: '4px', border: '1px solid #e5e7eb' }}>
+            <RefreshIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {/* Table — one row per adjustment document */}
+      <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+        <TableContainer>
+          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 820 }}>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                <TableCell sx={thSx} width={44}>#</TableCell>
+                <TableCell sx={thSx} width={90}>Store</TableCell>
+                <TableCell sx={thSx}>Store Name</TableCell>
+                <TableCell sx={thSx} width={160}>Adj SID</TableCell>
+                <TableCell sx={thSx} width={70} align="center">Items</TableCell>
+                <TableCell sx={thSx} width={70} align="center">Posted</TableCell>
+                <TableCell sx={thSx} width={70} align="center">Errors</TableCell>
+                <TableCell sx={thSx} width={85}>Status</TableCell>
+                <TableCell sx={thSx} width={140}>Created At</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {!selectedBatch ? (
+                <TableRow><TableCell colSpan={9} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  Select a batch above to view records.
+                </TableCell></TableRow>
+              ) : isLoading ? (
+                <TableRow><TableCell colSpan={9} align="center" sx={{ py: 6 }}>
+                  <CircularProgress size={22} />
+                </TableCell></TableRow>
+              ) : docs.length === 0 ? (
+                <TableRow><TableCell colSpan={9} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  No adjustment documents found.
+                </TableCell></TableRow>
+              ) : docs.map((doc, i) => (
+                <TableRow key={doc.id} onClick={() => setDetail(doc)}
+                  sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f0f7ff' }, transition: 'background 0.1s' }}>
+                  <TableCell sx={tdSx}>{page * pageSize + i + 1}</TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                    {doc.store_code || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.store_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.adj_sid || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center' }}>{doc.item_count}</TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                    {doc.posted_count}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', color: doc.error_count > 0 ? '#b91c1c' : '#6b7280',
+                    fontWeight: doc.error_count > 0 ? 600 : 400 }}>
+                    {doc.error_count}
+                  </TableCell>
+                  <TableCell sx={tdSx}><AdjStatusChip status={doc.status} /></TableCell>
+                  <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
+                    {fmt(doc.created_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {/* Pagination */}
+        {(data?.total ?? 0) > pageSize && (
+          <Box sx={{ px: 2, py: 1, borderTop: '1px solid #f3f4f6',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
+              Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, data!.total)} of {data!.total}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button size="small" variant="outlined" disabled={page === 0}
+                onClick={() => setPage(p => p - 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Prev</Button>
+              <Button size="small" variant="outlined" disabled={page >= totalPages - 1}
+                onClick={() => setPage(p => p + 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Next</Button>
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      <QtyAdjDetailDialog doc={detail} onClose={() => setDetail(null)} />
+    </Box>
+  )
+}
+
 // ── Module tab registry ───────────────────────────────────────────────────────
 
 const MODULE_TABS = [
-  { label: 'Item Master', content: <ItemMasterTab /> },
+  { label: 'Item Master',    content: <ItemMasterTab /> },
+  { label: 'QTY Adjustment', content: <QtyAdjustmentTab /> },
 ]
 
 // ── Page ──────────────────────────────────────────────────────────────────────

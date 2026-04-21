@@ -104,15 +104,87 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
     return files_processed, im_processed
 
 
+async def _poll_qty_adjustment(host: str, port: int, user: str, password: str) -> tuple[int, int]:
+    """
+    Poll the Qty Adjustment import path and process every .csv file found.
+    Returns (files_processed_count, docs_processed_count).
+    """
+    import_path = (await get_setting("ftp_qty_adjust_import_path", "/")) or "/"
+    processed_path = import_path.rstrip("/") + "/processed"
+
+    try:
+        all_files = list_all_files(host, port, user, password, import_path)
+    except Exception as exc:
+        logger.error(f"[QtyAdj] FTP listing failed for path '{import_path}': {exc}")
+        return 0, 0
+
+    all_files = [
+        f for f in all_files
+        if f.lower().endswith(".csv") and "processed" not in f.lower()
+    ]
+
+    if not all_files:
+        logger.info("[QtyAdj] No .csv files found in qty adjustment import path.")
+        return 0, 0
+
+    files_processed = 0
+    docs_processed = 0
+
+    for filename in all_files:
+        files_processed += 1
+        file_start = time.monotonic()
+        status_str = "failed"
+        summary = ""
+
+        try:
+            file_bytes = download_excel_file(filename, host, port, user, password, import_path)
+        except Exception as exc:
+            logger.error(f"[QtyAdj] Download failed for {filename}: {exc}")
+            continue
+
+        try:
+            from app.services.qty_adjustment_service import process_qty_adjustment_csv
+            batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
+            result = await process_qty_adjustment_csv(file_bytes, source_file=batch_key)
+            docs_processed += result.get("total_docs", 0)
+            summary = (
+                f"QtyAdj {filename}: "
+                f"docs={result.get('total_docs', 0)} "
+                f"posted={result.get('posted_docs', 0)} "
+                f"errors={result.get('error_docs', 0)} "
+                f"items={result.get('total_items', 0)}"
+            )
+            logger.info(summary)
+            status_str = "success"
+        except Exception as exc:
+            summary = f"QtyAdj processing failed for {filename}: {exc}"
+            logger.error(summary)
+
+        duration_ms = round((time.monotonic() - file_start) * 1000, 2)
+        async with get_session() as session:
+            async with session.begin():
+                await write_log(
+                    session, activity_type="qty_adjustment", status=status_str,
+                    details=summary, duration_ms=duration_ms,
+                    metadata={"filename": filename},
+                )
+
+        try:
+            move_ftp_file_to_processed(filename, import_path, processed_path, host, port, user, password)
+        except Exception as exc:
+            logger.warning(f"[QtyAdj] Could not move {filename} to processed: {exc}")
+
+    return files_processed, docs_processed
+
+
 async def poll_ftp_and_ingest():
     """
     APScheduler job: poll all configured FTP import paths for new files.
 
     Routing logic
     ─────────────
-    • Item Master import path → every .xlsx found → item_master_service
-      (no filename filtering, no seen-file deduplication — always reprocessed)
-    • (CSV paths for qty adjust, price adjustment, transfers, GRN — future modules)
+    • Item Master import path     → .xlsx / .csv → item_master_service
+    • Qty Adjustment import path  → .csv          → qty_adjustment_service
     """
     job_start = time.monotonic()
     logger.info("FTP poll job started.")
@@ -138,11 +210,16 @@ async def poll_ftp_and_ingest():
     new_files    += im_new
     im_processed += im_rows
 
+    # ── Poll Qty Adjustment import path ──────────────────────────────────────
+    qa_new, qa_docs = await _poll_qty_adjustment(host, port, user, password)
+    new_files    += qa_new
+    docs_inserted += qa_docs
+
     # ── Final summary ────────────────────────────────────────────────────────
     total_duration = (time.monotonic() - job_start) * 1000
     summary = (
         f"Processed {new_files} new files — "
-        f"{docs_inserted} CSV docs inserted, {im_processed} Item Master rows processed."
+        f"{docs_inserted} QtyAdj docs, {im_processed} Item Master rows processed."
     )
     logger.info(f"FTP poll job done. {summary}")
 

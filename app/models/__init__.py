@@ -4,5 +4,6 @@ from app.models.system_config import SystemConfig
 from app.models.ftp_seen_file import FtpSeenFile
 from app.models.user import User
 from app.models.app_setting import AppSetting
+from app.models.qty_adjustment_doc import QtyAdjustmentDoc
 
-__all__ = ["Document", "ActivityLog", "SystemConfig", "FtpSeenFile", "User", "AppSetting"]
+__all__ = ["Document", "ActivityLog", "SystemConfig", "FtpSeenFile", "User", "AppSetting", "QtyAdjustmentDoc"]
