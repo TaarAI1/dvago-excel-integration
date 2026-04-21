@@ -1,23 +1,32 @@
 # syntax=docker/dockerfile:1.4
-# Stage 1: Build React app
+
+# ── Stage 1: Build React app ──────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
 WORKDIR /app
-COPY --link package*.json ./
-RUN npm ci
 
-COPY --link . .
+# Railway BuildKit cannot COPY directories from the build context.
+# Fetch the entire repo from GitHub and extract the frontend folder.
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG RAILWAY_GIT_COMMIT_SHA=main
+RUN wget --tries=3 --timeout=120 -q \
+        "https://github.com/TaarAI1/dvago-excel-integration/archive/${RAILWAY_GIT_COMMIT_SHA}.tar.gz" \
+        -O /tmp/repo.tar.gz \
+    && tar -xzf /tmp/repo.tar.gz -C /tmp \
+    && cp -r /tmp/dvago-excel-integration-*/frontend/. /app/ \
+    && rm -rf /tmp/repo.tar.gz /tmp/dvago-excel-integration-*
+
+RUN npm ci
 RUN npm run build
 
-# Stage 2: Serve with Nginx
+# ── Stage 2: Serve with Nginx ─────────────────────────────────────────────────
 FROM nginx:1.25-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Copy nginx config as a template (__BACKEND_URL__ replaced at runtime by sed)
-COPY nginx.conf /etc/nginx/conf.d/default.conf.template
+COPY --from=builder /app/nginx.conf /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 80
 
-# Replace placeholders with env vars, then start nginx
 CMD ["/bin/sh", "-c", "sed \"s|__BACKEND_URL__|$BACKEND_URL|g;s|__PORT__|${PORT:-80}|g\" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
