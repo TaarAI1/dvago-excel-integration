@@ -44,10 +44,42 @@ function last24hIso(): string {
   return toApiIso(toDatetimeLocal(d))
 }
 
+// ── Status colour map ─────────────────────────────────────────────────────────
+
+const STATUS_STYLES: Record<string, { bg: string; color: string; border: string }> = {
+  success: { bg: '#f0fdf4', color: '#15803d', border: '#bbf7d0' },
+  failed:  { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' },
+  skipped: { bg: '#fffbeb', color: '#b45309', border: '#fde68a' },
+  partial: { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+  pending: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+  error:   { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' },
+}
+
+const defaultStatusStyle = { bg: '#f3f4f6', color: '#374151', border: '#e5e7eb' }
+
+function StatusChip({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] ?? defaultStatusStyle
+  return (
+    <Box component="span" sx={{
+      display: 'inline-block', px: 1, py: '1px',
+      fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em',
+      borderRadius: '4px', border: `1px solid ${s.border}`,
+      bgcolor: s.bg, color: s.color, whiteSpace: 'nowrap',
+      textTransform: 'uppercase', lineHeight: '18px', minWidth: 52, textAlign: 'center',
+    }}>
+      {status}
+    </Box>
+  )
+}
+
 // ── Log row ────────────────────────────────────────────────────────────────────
 
 function LogRow({ log }: { log: LogEntry }) {
-  const statusColor = log.status === 'success' ? 'success' : log.status === 'failed' ? 'error' : 'warning'
+  const detailColor =
+    log.status === 'failed' || log.status === 'error' ? '#b91c1c' :
+    log.status === 'skipped' ? '#92400e' :
+    log.status === 'partial' ? '#9a3412' :
+    '#111827'
 
   return (
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', py: 0.75,
@@ -58,15 +90,13 @@ function LogRow({ log }: { log: LogEntry }) {
       </Typography>
       <Chip label={log.activity_type} size="small" variant="outlined"
         sx={{ fontSize: 10, height: 20, minWidth: 90 }} />
-      <Chip label={log.status} size="small" color={statusColor}
-        sx={{ fontSize: 10, height: 20, minWidth: 60 }} />
+      <StatusChip status={log.status} />
       {log.document_type && (
         <Typography variant="caption" sx={{ color: 'text.secondary', minWidth: 100 }}>
           {log.document_type}
         </Typography>
       )}
-      <Typography variant="caption" sx={{ flex: 1,
-        color: log.status === 'failed' ? 'error.main' : 'text.primary' }}>
+      <Typography variant="caption" sx={{ flex: 1, color: detailColor }}>
         {log.details}
       </Typography>
       {log.duration_ms != null && (
@@ -179,14 +209,16 @@ export default function ActivityLog() {
           }}
         />
 
-        <FormControl size="small" sx={{ minWidth: 130 }}>
+        <FormControl size="small" sx={{ minWidth: 150 }}>
           <InputLabel>Type</InputLabel>
           <Select value={filterType} label="Type" onChange={e => setFilterType(e.target.value)}>
             <MenuItem value="">All</MenuItem>
             <MenuItem value="ftp_poll">FTP Poll</MenuItem>
+            <MenuItem value="item_master">Item Master</MenuItem>
+            <MenuItem value="qty_adjustment">QTY Adjustment</MenuItem>
+            <MenuItem value="sales_export">Sales Export</MenuItem>
             <MenuItem value="csv_parse">CSV Parse</MenuItem>
             <MenuItem value="api_call">API Call</MenuItem>
-            <MenuItem value="item_master">Item Master</MenuItem>
             <MenuItem value="manual_trigger">Manual</MenuItem>
             <MenuItem value="error">Error</MenuItem>
           </Select>
@@ -197,6 +229,8 @@ export default function ActivityLog() {
           <Select value={filterStatus} label="Status" onChange={e => setFilterStatus(e.target.value)}>
             <MenuItem value="">All</MenuItem>
             <MenuItem value="success">Success</MenuItem>
+            <MenuItem value="skipped">Skipped</MenuItem>
+            <MenuItem value="partial">Partial</MenuItem>
             <MenuItem value="failed">Failed</MenuItem>
             <MenuItem value="pending">Pending</MenuItem>
           </Select>

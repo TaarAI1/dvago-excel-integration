@@ -177,6 +177,12 @@ async def run_sales_export():
             results.append((store_no, filename, row_count, "failed", str(exc)))
             continue
 
+        # ── Count actual rows written in CSV (lines minus header) ───────────
+        try:
+            written_rows = max(0, csv_bytes.count(b'\n') - 1)
+        except Exception:
+            written_rows = row_count
+
         # ── Upload to FTP ────────────────────────────────────────────────────
         try:
             await asyncio.to_thread(
@@ -185,7 +191,7 @@ async def run_sales_export():
             )
             msg = (
                 f"Sales Export Store {store_no}: query returned {row_count} rows — "
-                f"wrote {row_count} rows to CSV — uploaded as {filename}"
+                f"wrote {written_rows} rows to CSV — uploaded as {filename}"
             )
             logger.info(msg)
             store_ms = round((time.monotonic() - store_start) * 1000, 2)
@@ -193,7 +199,8 @@ async def run_sales_export():
                 async with session.begin():
                     await write_log(session, activity_type="sales_export", status="success",
                                     details=msg, duration_ms=store_ms,
-                                    metadata={"store_no": store_no, "rows": row_count,
+                                    metadata={"store_no": store_no, "query_rows": row_count,
+                                              "written_rows": written_rows,
                                               "filename": filename, "ftp_path": export_path})
             results.append((store_no, filename, row_count, "success", None))
         except Exception as exc:
