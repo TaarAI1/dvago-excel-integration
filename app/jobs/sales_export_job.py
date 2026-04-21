@@ -121,57 +121,98 @@ async def run_sales_export():
                                 details=f"Store list query failed: {exc}")
         return
 
-    # ── Step 2: Per-store export ──────────────────────────────────────────────
+    # ── Step 2: Per-store export (one activity log entry per store) ───────────
     timestamp  = now_pkt().strftime('%Y%m%d_%H%M%S')
-    results    = []          # [(store_no, filename, row_count, status, error)]
+    results    = []   # [(store_no, filename, row_count, status, error)]
 
     for store_no in store_numbers:
-        store_sql = _inject_store(sql_template, store_no)
-        filename  = f"{prefix}_{store_no}_{timestamp}.csv"
+        store_start = time.monotonic()
+        store_sql   = _inject_store(sql_template, store_no)
+        filename    = f"{prefix}_{store_no}_{timestamp}.csv"
 
-        # Run Oracle query
+        # ── Run Oracle query ─────────────────────────────────────────────────
         try:
             df = await run_query(
                 oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
                 store_sql,
             )
             row_count = len(df) if df is not None else 0
-            logger.info("Store %s: Oracle query returned %d rows.", store_no, row_count)
         except Exception as exc:
-            logger.error("Store %s: Oracle query failed: %s", store_no, exc)
+            msg = f"Sales Export Store {store_no}: query failed — {exc}"
+            logger.error(msg)
+            store_ms = round((time.monotonic() - store_start) * 1000, 2)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="failed",
+                                    details=msg, duration_ms=store_ms,
+                                    metadata={"store_no": store_no, "error": str(exc)})
             results.append((store_no, filename, 0, "failed", str(exc)))
             continue
 
+        # ── No data ──────────────────────────────────────────────────────────
         if df is None or df.is_empty():
-            logger.info("Store %s: no rows — skipping upload.", store_no)
+            msg = f"Sales Export Store {store_no}: no data returned by query — skipped"
+            logger.info(msg)
+            store_ms = round((time.monotonic() - store_start) * 1000, 2)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="skipped",
+                                    details=msg, duration_ms=store_ms,
+                                    metadata={"store_no": store_no, "rows": 0})
             results.append((store_no, filename, 0, "skipped", "no rows"))
             continue
 
-        # Convert to CSV
+        # ── Convert to CSV ───────────────────────────────────────────────────
         try:
             csv_bytes = df.write_csv().encode("utf-8")
         except Exception as exc:
-            logger.error("Store %s: CSV generation failed: %s", store_no, exc)
+            msg = f"Sales Export Store {store_no}: CSV generation failed — {exc}"
+            logger.error(msg)
+            store_ms = round((time.monotonic() - store_start) * 1000, 2)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="failed",
+                                    details=msg, duration_ms=store_ms,
+                                    metadata={"store_no": store_no, "rows": row_count, "error": str(exc)})
             results.append((store_no, filename, row_count, "failed", str(exc)))
             continue
 
-        # Upload to FTP
+        # ── Upload to FTP ────────────────────────────────────────────────────
         try:
             await asyncio.to_thread(
                 upload_file, csv_bytes, filename,
                 ftp_host, ftp_port, ftp_user, ftp_password, export_path,
             )
-            logger.info("Store %s: uploaded %s to FTP %s.", store_no, filename, export_path)
+            msg = (
+                f"Sales Export Store {store_no}: query returned {row_count} rows — "
+                f"wrote {row_count} rows to CSV — uploaded as {filename}"
+            )
+            logger.info(msg)
+            store_ms = round((time.monotonic() - store_start) * 1000, 2)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="success",
+                                    details=msg, duration_ms=store_ms,
+                                    metadata={"store_no": store_no, "rows": row_count,
+                                              "filename": filename, "ftp_path": export_path})
             results.append((store_no, filename, row_count, "success", None))
         except Exception as exc:
-            logger.error("Store %s: FTP upload failed: %s", store_no, exc)
+            msg = f"Sales Export Store {store_no}: FTP upload failed — {exc}"
+            logger.error(msg)
+            store_ms = round((time.monotonic() - store_start) * 1000, 2)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="failed",
+                                    details=msg, duration_ms=store_ms,
+                                    metadata={"store_no": store_no, "rows": row_count,
+                                              "filename": filename, "error": str(exc)})
             results.append((store_no, filename, row_count, "failed", str(exc)))
 
-    # ── Step 3: Summary log ───────────────────────────────────────────────────
-    ok_count    = sum(1 for r in results if r[3] == "success")
-    skip_count  = sum(1 for r in results if r[3] == "skipped")
-    fail_count  = sum(1 for r in results if r[3] == "failed")
-    total_rows  = sum(r[2] for r in results)
+    # ── Step 3: Overall summary log ───────────────────────────────────────────
+    ok_count   = sum(1 for r in results if r[3] == "success")
+    skip_count = sum(1 for r in results if r[3] == "skipped")
+    fail_count = sum(1 for r in results if r[3] == "failed")
+    total_rows = sum(r[2] for r in results)
     duration_ms = round((time.monotonic() - job_start) * 1000, 2)
 
     summary = (
@@ -191,15 +232,11 @@ async def run_sales_export():
                 details=summary,
                 duration_ms=duration_ms,
                 metadata={
+                    "summary": True,
                     "stores": len(store_numbers),
                     "uploaded": ok_count,
                     "skipped": skip_count,
                     "failed": fail_count,
                     "total_rows": total_rows,
-                    "per_store": [
-                        {"store_no": r[0], "file": r[1], "rows": r[2],
-                         "status": r[3], "error": r[4]}
-                        for r in results
-                    ],
                 },
             )
