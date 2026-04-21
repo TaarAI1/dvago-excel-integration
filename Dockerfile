@@ -1,7 +1,4 @@
 # syntax=docker/dockerfile:1.4
-# Root-level Dockerfile — fallback only.
-# PREFERRED: set Railway service Root Directory to /backend and use backend/Dockerfile.
-# This file is only used when Root Directory is / (repo root).
 
 FROM python:3.11-slim
 
@@ -30,14 +27,10 @@ RUN mkdir -p /opt/oracle \
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 
-# requirements.txt and app_bundle.tar.gz live at the repo root so Railway's
-# root-service build context (which excludes backend/ and frontend/ sub-services)
-# can still find them.
 COPY --link requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --link app_bundle.tar.gz ./app_bundle.tar.gz
-RUN tar -xzf app_bundle.tar.gz && rm app_bundle.tar.gz
+COPY --link backend/app ./app
 
 EXPOSE 8000
 
