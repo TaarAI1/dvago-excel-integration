@@ -28,6 +28,7 @@ interface ScheduleStatus {
   cron?: string
   ftp_job?: { next_run: string | null }
   sales_export_job?: { next_run: string | null }
+  sales_export_job_2?: { next_run: string | null }
 }
 
 // Reusable page section wrapper
@@ -88,9 +89,10 @@ export default function DashboardPage() {
     const v = e.target.value; setSelectedCron(v); configureMutation.mutate(v)
   }
 
-  const isRunning = scheduleStatus?.running ?? false
-  const nextFtpRun = scheduleStatus?.ftp_job?.next_run
-  const nextSalesRun = scheduleStatus?.sales_export_job?.next_run
+  const isRunning     = scheduleStatus?.running ?? false
+  const nextFtpRun    = scheduleStatus?.ftp_job?.next_run
+  const nextSalesRun  = scheduleStatus?.sales_export_job?.next_run
+  const nextSalesRun2 = scheduleStatus?.sales_export_job_2?.next_run
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3 }, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -169,11 +171,12 @@ export default function DashboardPage() {
 
         <Box sx={{ flexGrow: 1 }} />
 
-        {(nextFtpRun || nextSalesRun) && (
+        {(nextFtpRun || nextSalesRun || nextSalesRun2) && (
           <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
-            {nextFtpRun && `Next FTP: ${fmtTime(nextFtpRun)}`}
-            {nextFtpRun && nextSalesRun && '  ·  '}
-            {nextSalesRun && `Export: ${fmtTime(nextSalesRun)}`}
+            {nextFtpRun   && `Next FTP: ${fmtTime(nextFtpRun)}`}
+            {nextFtpRun   && nextSalesRun  && '  ·  '}
+            {nextSalesRun && `Export 1: ${fmtTime(nextSalesRun)}`}
+            {nextSalesRun2 && `  ·  Export 2: ${fmtTime(nextSalesRun2)}`}
           </Typography>
         )}
         {triggerMutation.isSuccess && (

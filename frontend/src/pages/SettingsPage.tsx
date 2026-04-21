@@ -553,11 +553,20 @@ export default function SettingsPage() {
 
           <TabPanel value={tab} index={3}>
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('poll_cron_schedule', 'FTP Cron (e.g. */15 * * * *)')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('sales_export_cron', 'Sales Export Cron (e.g. 0 2 * * *)')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('poll_cron_schedule', 'FTP Import Cron (e.g. */15 * * * *)')}</Grid>
             </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Sales Export Schedule</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('sales_export_cron',   'Sales Export — Time 1 (e.g. 0 2 * * *)')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('sales_export_cron_2', 'Sales Export — Time 2 (optional, e.g. 0 14 * * *)')}</Grid>
+            </Grid>
+
             <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
-              Format: minute · hour · day · month · weekday
+              Format: minute · hour · day · month · weekday &nbsp;·&nbsp; Leave Time 2 empty to disable it.
             </Typography>
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="scheduler" />

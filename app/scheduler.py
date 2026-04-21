@@ -6,15 +6,21 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
-FTP_JOB_ID = "ftp_poll_job"
-SALES_EXPORT_JOB_ID = "sales_export_job"
+FTP_JOB_ID           = "ftp_poll_job"
+SALES_EXPORT_JOB_ID  = "sales_export_job"
+SALES_EXPORT_JOB_ID2 = "sales_export_job_2"
 
 
-def setup_scheduler(poll_cron: str, sales_export_cron: str = "0 2 * * *"):
+def setup_scheduler(
+    poll_cron: str,
+    sales_export_cron: str = "0 2 * * *",
+    sales_export_cron_2: str = "",
+):
     from app.jobs.ftp_job import poll_ftp_and_ingest
     from app.jobs.sales_export_job import run_sales_export
 
-    for job_id in (FTP_JOB_ID, SALES_EXPORT_JOB_ID):
+    # Remove all existing managed jobs before re-adding
+    for job_id in (FTP_JOB_ID, SALES_EXPORT_JOB_ID, SALES_EXPORT_JOB_ID2):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
 
@@ -27,35 +33,57 @@ def setup_scheduler(poll_cron: str, sales_export_cron: str = "0 2 * * *"):
         coalesce=True,
         misfire_grace_time=60,
     )
+
     scheduler.add_job(
         run_sales_export,
         trigger=CronTrigger.from_crontab(sales_export_cron),
         id=SALES_EXPORT_JOB_ID,
-        name="Sales Export",
+        name="Sales Export (Time 1)",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
     )
-    logger.info(f"Scheduler jobs registered. FTP cron: {poll_cron}, Sales cron: {sales_export_cron}")
+
+    if sales_export_cron_2 and sales_export_cron_2.strip():
+        scheduler.add_job(
+            run_sales_export,
+            trigger=CronTrigger.from_crontab(sales_export_cron_2.strip()),
+            id=SALES_EXPORT_JOB_ID2,
+            name="Sales Export (Time 2)",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=120,
+        )
+        logger.info(
+            "Scheduler jobs registered. FTP cron: %s, Sales cron 1: %s, Sales cron 2: %s",
+            poll_cron, sales_export_cron, sales_export_cron_2,
+        )
+    else:
+        logger.info(
+            "Scheduler jobs registered. FTP cron: %s, Sales cron: %s (no second time configured)",
+            poll_cron, sales_export_cron,
+        )
 
 
 def get_schedule_status() -> dict:
-    ftp_job   = scheduler.get_job(FTP_JOB_ID)
-    sales_job = scheduler.get_job(SALES_EXPORT_JOB_ID)
+    ftp_job    = scheduler.get_job(FTP_JOB_ID)
+    sales_job  = scheduler.get_job(SALES_EXPORT_JOB_ID)
+    sales_job2 = scheduler.get_job(SALES_EXPORT_JOB_ID2)
 
     def job_info(job):
         if not job:
             return None
         next_run = job.next_run_time
         return {
-            "id": job.id,
-            "name": job.name,
+            "id":       job.id,
+            "name":     job.name,
             "next_run": next_run.isoformat() if next_run else None,
-            "pending": job.pending,
+            "pending":  job.pending,
         }
 
     return {
-        "running": scheduler.running,
-        "ftp_job": job_info(ftp_job),
+        "running":          scheduler.running,
+        "ftp_job":          job_info(ftp_job),
         "sales_export_job": job_info(sales_job),
+        "sales_export_job_2": job_info(sales_job2),
     }

@@ -92,19 +92,21 @@ async def lifespan(app: FastAPI):
         logger.error(f"Settings seed failed: {exc}")
 
     # ── Scheduler ─────────────────────────────────────────────────────────
-    poll_cron = settings.poll_cron_schedule
-    sales_cron = "0 2 * * *"
+    poll_cron    = settings.poll_cron_schedule
+    sales_cron   = "0 2 * * *"
+    sales_cron_2 = ""
     try:
         from app.db.settings_store import get_setting
-        poll_cron = (await get_setting("poll_cron_schedule")) or poll_cron
-        sales_cron = (await get_setting("sales_export_cron")) or sales_cron
+        poll_cron    = (await get_setting("poll_cron_schedule")) or poll_cron
+        sales_cron   = (await get_setting("sales_export_cron"))  or sales_cron
+        sales_cron_2 = (await get_setting("sales_export_cron_2") or "")
     except Exception as exc:
         logger.warning(f"Could not load cron from DB, using defaults: {exc}")
 
     try:
-        setup_scheduler(poll_cron, sales_cron)
+        setup_scheduler(poll_cron, sales_cron, sales_cron_2)
         scheduler.start()
-        logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}")
+        logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}, Sales cron 2: {sales_cron_2 or 'not set'}")
     except Exception as exc:
         logger.error(f"Scheduler start failed: {exc}")
 
