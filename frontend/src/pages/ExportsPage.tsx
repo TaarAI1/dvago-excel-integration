@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Chip, CircularProgress,
+  TableContainer, TableHead, TableRow, CircularProgress,
   Select, MenuItem, FormControl, IconButton, Tooltip, Button,
   Dialog, DialogContent, DialogActions, LinearProgress,
 } from '@mui/material'
@@ -244,7 +244,6 @@ function SalesExportTab() {
   const [selectedRun, setSelectedRun] = useState('')
   const [detail, setDetail]           = useState<ExportStore | null>(null)
   const [killing, setKilling]         = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Runs list (batch dropdown)
   const { data: runsData, isFetching: runsFetching } = useQuery<{ items: ExportRun[] }>({
