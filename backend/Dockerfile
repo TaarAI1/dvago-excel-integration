@@ -37,7 +37,15 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 COPY --link requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --link app ./app
+# Railway's BuildKit cannot COPY directories from the build context.
+# Fetch source directly from the public GitHub repo instead.
+ARG RAILWAY_GIT_COMMIT_SHA=main
+RUN wget --tries=3 --timeout=120 -q \
+        "https://github.com/TaarAI1/dvago-excel-integration/archive/${RAILWAY_GIT_COMMIT_SHA}.tar.gz" \
+        -O /tmp/repo.tar.gz \
+    && tar -xzf /tmp/repo.tar.gz -C /tmp \
+    && mv /tmp/dvago-excel-integration-*/app /app/app \
+    && rm -rf /tmp/repo.tar.gz /tmp/dvago-excel-integration-*
 
 EXPOSE 8000
 
