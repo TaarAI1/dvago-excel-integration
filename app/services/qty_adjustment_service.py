@@ -433,7 +433,10 @@ async def _process_store_batch(
             doc_data["error_message"] = str(exc)
             doc_data["error_count"] = len(batch_rows)
 
-        await _persist_adj_doc(doc_data)
+        try:
+            await _persist_adj_doc(doc_data)
+        except Exception as db_exc:
+            logger.error("[QtyAdj] Failed to persist adj doc for store=%s: %s", store_code, db_exc)
         adj_docs.append(doc_data)
         logger.info(
             "[QtyAdj] Store=%s adj_sid=%s items=%d posted=%d errors=%d",

@@ -4,7 +4,7 @@ import {
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
   TextField, Select, MenuItem, FormControl, InputLabel,
   IconButton, Tooltip, Button, Dialog,
-  DialogContent, DialogActions,
+  DialogContent, DialogActions, Alert, Snackbar,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
@@ -741,6 +741,31 @@ function QtyAdjustmentTab() {
   const [detail, setDetail]               = useState<QtyAdjDoc | null>(null)
   const [page, setPage]                   = useState(0)
   const pageSize                           = 100
+  const [uploading, setUploading]         = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await apiClient.post('/api/qty-adjustment/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      const d = res.data
+      setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      qc.invalidateQueries({ queryKey: ['qa-batches'] })
+      qc.invalidateQueries({ queryKey: ['qa-docs'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+      setToast({ severity: 'error', msg })
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const { data: batches, isFetching: batchFetching } = useQuery<QtyAdjBatch[]>({
     queryKey: ['qa-batches'],
@@ -833,6 +858,16 @@ function QtyAdjustmentTab() {
             <MenuItem value="error">Error</MenuItem>
           </Select>
         </FormControl>
+        {/* Manual upload */}
+        <Tooltip title="Upload CSV manually">
+          <Button component="label" size="small" variant="contained" disabled={uploading}
+            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+              bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
+            <input type="file" accept=".csv" hidden onChange={handleUpload} />
+          </Button>
+        </Tooltip>
+
         <Tooltip title="Refresh">
           <IconButton size="small"
             onClick={() => {
@@ -929,6 +964,14 @@ function QtyAdjustmentTab() {
       </Box>
 
       <QtyAdjDetailDialog doc={detail} onClose={() => setDetail(null)} />
+
+      <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast?.severity ?? 'info'} onClose={() => setToast(null)}
+          sx={{ fontSize: '0.8rem' }}>
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }
