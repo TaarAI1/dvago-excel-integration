@@ -16,17 +16,20 @@ logger = logging.getLogger(__name__)
 
 
 async def _seed_users():
-    """Create the initial admin user from env vars if no users exist yet."""
-    from sqlalchemy import select, func
+    """Ensure the admin user from env vars exists. Creates it if missing."""
+    from sqlalchemy import select
     from app.db.postgres import get_session
     from app.models.user import User
     from app.core.security import get_password_hash
     import uuid
 
     async with get_session() as session:
-        count = await session.scalar(select(func.count()).select_from(User))
+        result = await session.execute(
+            select(User).where(User.username == settings.dashboard_username)
+        )
+        existing = result.scalar_one_or_none()
 
-    if count == 0:
+    if not existing:
         async with get_session() as session:
             async with session.begin():
                 session.add(User(
@@ -35,7 +38,7 @@ async def _seed_users():
                     hashed_password=get_password_hash(settings.dashboard_password),
                     is_active=True,
                 ))
-        logger.info(f"Seeded initial admin user: {settings.dashboard_username}")
+        logger.info(f"Seeded admin user: {settings.dashboard_username}")
 
 
 async def _seed_settings():
