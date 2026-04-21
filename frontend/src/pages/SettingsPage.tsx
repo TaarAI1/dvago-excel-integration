@@ -212,6 +212,7 @@ export default function SettingsPage() {
   const [saveError, setSaveError] = useState('')
   const [ftpResult, setFtpResult] = useState<{ ok: boolean; error: string | null } | null>(null)
   const [oracleResult, setOracleResult] = useState<{ ok: boolean; error: string | null } | null>(null)
+  const [salesOracleResult, setSalesOracleResult] = useState<{ ok: boolean; error: string | null } | null>(null)
   const [retailproResult, setRetailproResult] = useState<{
     ok: boolean
     message?: string
@@ -310,6 +311,10 @@ export default function SettingsPage() {
   const testOracle = async () => {
     try { const r = await apiClient.post('/api/settings/test/oracle', { host: g('oracle_host'), port: parseInt(g('oracle_port') || '1521'), user: g('oracle_username'), password: g('oracle_password'), service_name: g('oracle_service_name') }); setOracleResult(r.data) }
     catch { setOracleResult({ ok: false, error: 'Request failed' }) }
+  }
+  const testSalesOracle = async () => {
+    try { const r = await apiClient.post('/api/settings/test/oracle', { host: g('sales_oracle_host'), port: parseInt(g('sales_oracle_port') || '1521'), user: g('sales_oracle_username'), password: g('sales_oracle_password'), service_name: g('sales_oracle_service_name') }); setSalesOracleResult(r.data) }
+    catch { setSalesOracleResult({ ok: false, error: 'Request failed' }) }
   }
   const testRetailPro = async () => {
     try {
@@ -559,6 +564,23 @@ export default function SettingsPage() {
           </TabPanel>
 
           <TabPanel value={tab} index={4}>
+            {/* Oracle connection dedicated to Sales Export */}
+            <Divider sx={{ mb: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Oracle Connection (Sales Export only)</Typography>
+            </Divider>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('sales_oracle_host',         'Oracle Host')}</Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('sales_oracle_port',         'Port')}</Grid>
+              <Grid size={{ xs: 12 }}>{F('sales_oracle_service_name',         'Service Name')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('sales_oracle_username',     'Username')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('sales_oracle_password',     'Password', true)}</Grid>
+            </Grid>
+            <OracleTestButton onClick={testSalesOracle} result={salesOracleResult} />
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Export Settings</Typography>
+            </Divider>
+
             <Grid container spacing={2}>
               <Grid size={{ xs: 12 }}>{F('sales_export_sql', 'SQL Query')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('sales_export_filename_prefix', 'Filename Prefix')}</Grid>

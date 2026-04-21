@@ -23,12 +23,14 @@ async def run_sales_export():
     job_start = time.monotonic()
     logger.info("Sales export job started.")
 
-    # Load all required settings
-    oracle_host = await get_setting("oracle_host", "")
-    oracle_port = int(await get_setting("oracle_port", "1521") or "1521")
-    oracle_service = await get_setting("oracle_service_name", "")
-    oracle_user = await get_setting("oracle_username", "")
-    oracle_password = await get_setting("oracle_password", "") or ""
+    # Load all required settings — Sales Export uses its own dedicated Oracle connection.
+    # If the dedicated host is empty, fall back to the shared Oracle DB settings so
+    # existing deployments keep working without re-configuration.
+    oracle_host    = await get_setting("sales_oracle_host", "") or await get_setting("oracle_host", "")
+    oracle_port    = int(await get_setting("sales_oracle_port", "1521") or "1521")
+    oracle_service = await get_setting("sales_oracle_service_name", "") or await get_setting("oracle_service_name", "")
+    oracle_user    = await get_setting("sales_oracle_username", "") or await get_setting("oracle_username", "")
+    oracle_password = (await get_setting("sales_oracle_password", "") or await get_setting("oracle_password", "") or "")
     sql = await get_setting("sales_export_sql", "")
     ftp_host = await get_setting("ftp_host", "localhost")
     ftp_port = int(await get_setting("ftp_port", "21") or "21")

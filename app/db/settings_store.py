@@ -47,8 +47,14 @@ SETTING_DEFINITIONS = [
     ("poll_cron_schedule",        "scheduler",    "FTP Import Cron",             "*/15 * * * *", False),
     ("sales_export_cron",         "scheduler",    "Sales Export Cron",           "0 2 * * *",    False),
     # Sales Export
-    ("sales_export_sql",          "sales_export", "Sales SQL Query",             "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
-    ("sales_export_filename_prefix", "sales_export", "Output Filename Prefix",  "sales_export", False),
+    ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
+    ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),
+    # Sales Export — dedicated Oracle connection (separate from the shared Oracle DB)
+    ("sales_oracle_host",             "sales_export", "Oracle Host (Sales Export)",   "",     False),
+    ("sales_oracle_port",             "sales_export", "Oracle Port (Sales Export)",   "1521", False),
+    ("sales_oracle_service_name",     "sales_export", "Service Name (Sales Export)",  "",     False),
+    ("sales_oracle_username",         "sales_export", "Username (Sales Export)",      "",     False),
+    ("sales_oracle_password",         "sales_export", "Password (Sales Export)",      "",     True),
     # SMTP
     ("smtp_host",                 "smtp",         "SMTP Host",                   "",             False),
     ("smtp_port",                 "smtp",         "SMTP Port",                   "587",          False),
