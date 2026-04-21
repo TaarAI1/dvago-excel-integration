@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, CircularProgress,
@@ -279,22 +279,40 @@ function SalesExportTab() {
     refetchInterval: 2_000,
   })
 
-  // When a run is active, keep refreshing the stores
+  // Track previous active state to detect when an export finishes/is killed
+  const prevActiveRef = useRef<boolean>(false)
+
   useEffect(() => {
-    if (progress?.active && selectedRun && progress.run_id === selectedRun) {
+    const isActive = !!progress?.active
+    const wasActive = prevActiveRef.current
+    prevActiveRef.current = isActive
+
+    if (isActive) {
+      // Export is running — keep stores + runs fresh
       qc.invalidateQueries({ queryKey: ['export-stores', selectedRun] })
       qc.invalidateQueries({ queryKey: ['export-runs'] })
+    } else if (wasActive && !isActive) {
+      // Export just finished or was killed — force immediate refresh so
+      // the batch dropdown status badge updates straight away
+      qc.invalidateQueries({ queryKey: ['export-runs'] })
+      qc.invalidateQueries({ queryKey: ['export-stores', selectedRun] })
     }
   }, [progress, selectedRun, qc])
 
   const killMutation = useMutation({
     mutationFn: () => apiClient.post('/api/sales-export/kill'),
     onMutate: () => setKilling(true),
-    onSettled: () => {
-      setKilling(false)
-      qc.invalidateQueries({ queryKey: ['export-progress'] })
-      qc.invalidateQueries({ queryKey: ['export-runs'] })
+    onSuccess: () => {
+      // Poll more aggressively for a few seconds after kill so the UI
+      // picks up the cancelled status as quickly as possible
+      const ids = [500, 1500, 3000, 6000]
+      ids.forEach(ms => setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ['export-progress'] })
+        qc.invalidateQueries({ queryKey: ['export-runs'] })
+        qc.invalidateQueries({ queryKey: ['export-stores', selectedRun] })
+      }, ms))
     },
+    onSettled: () => setKilling(false),
   })
 
   const isRunning   = progress?.active && progress.run_id === selectedRun
