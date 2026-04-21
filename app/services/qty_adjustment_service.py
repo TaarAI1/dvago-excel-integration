@@ -78,7 +78,7 @@ async def _get_store_sid(store_code: str, cache: dict, oc: dict) -> Optional[str
     key = str(store_code).strip()
     if key not in cache:
         cache[key] = await _oracle_scalar(
-            f"SELECT sid FROM rps.store WHERE store_Code = '{key}'", oc
+            f"SELECT sid FROM rps.store WHERE store_Code = {key}", oc
         )
     return cache[key]
 
@@ -86,7 +86,7 @@ async def _get_store_sid(store_code: str, cache: dict, oc: dict) -> Optional[str
 async def _get_sbs_sid(cache: dict, oc: dict) -> Optional[str]:
     if "__sbs1__" not in cache:
         cache["__sbs1__"] = await _oracle_scalar(
-            "SELECT sid FROM rps.subsidairy WHERE sbs_no = 1", oc
+            "SELECT sid FROM rps.subsidiary WHERE sbs_no = 1", oc
         )
     return cache["__sbs1__"]
 
