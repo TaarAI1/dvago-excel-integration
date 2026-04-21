@@ -1,8 +1,22 @@
-# Railway monorepo config.
-# In the Railway dashboard each service must set its own Root Directory:
-#   API service      → Root Directory: /   (repo root)   Dockerfile: Dockerfile
-#   Frontend service → Root Directory: /frontend          Dockerfile: Dockerfile
+# Railway monorepo config — applies to any service whose Root Directory = /
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED Railway dashboard settings per service:
+#
+#   API / Backend service:
+#     Root Directory : /            ← MUST be repo root, NOT /backend
+#     Dockerfile     : Dockerfile
+#
+#   Frontend service:
+#     Root Directory : /frontend
+#     Dockerfile     : Dockerfile
+# ─────────────────────────────────────────────────────────────────────────────
 
 [build]
   builder = "DOCKERFILE"
   dockerfilePath = "Dockerfile"
+
+[deploy]
+  healthcheckPath = "/api/health"
+  healthcheckTimeout = 300
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 3
