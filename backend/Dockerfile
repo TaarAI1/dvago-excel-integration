@@ -37,7 +37,7 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 COPY --link requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --link . .
+COPY --link app ./app
 
 EXPOSE 8000
 
