@@ -177,23 +177,32 @@ def detect_header_row(ws) -> int:
 def parse_excel(file_bytes: bytes) -> list[dict]:
     """
     Parse Excel bytes into a list of row dicts.
-    Keys are normalised column names; values are raw cell values.
-    Rows without a UPC are skipped.
+
+    Mapping is strictly by column name (case-insensitive, whitespace-stripped),
+    so column order in the file does not matter.  Columns whose header cell is
+    blank or None are silently ignored.  Rows without a UPC value are skipped.
     """
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     ws = wb.active
     hdr_idx = detect_header_row(ws)
 
-    headers: list[str] = []
+    # column-index → normalised column name (blank-header columns excluded)
+    col_map: dict[int, str] = {}
     rows_out: list[dict] = []
 
     for row_idx, row_vals in enumerate(
         ws.iter_rows(min_row=hdr_idx, values_only=True), start=hdr_idx
     ):
         if row_idx == hdr_idx:
-            headers = [_norm(v) for v in row_vals]
+            col_map = {
+                i: _norm(v)
+                for i, v in enumerate(row_vals)
+                if _norm(v)          # skip empty / None header cells
+            }
             continue
-        rd = {headers[i]: v for i, v in enumerate(row_vals) if i < len(headers)}
+        # Build row dict by column name; columns not present in the header are
+        # ignored, so extra trailing cells never cause an IndexError.
+        rd = {col_map[i]: v for i, v in enumerate(row_vals) if i in col_map}
         upc = rd.get("UPC")
         if not upc:
             continue
