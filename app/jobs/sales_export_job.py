@@ -167,10 +167,10 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
     try:
         stores_df = await run_query(
             oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
-            "SELECT DISTINCT store_no FROM rps.store ORDER BY store_no",
+            "SELECT store_no, store_name FROM rps.store WHERE active = 1 AND sbs_no = 1",
         )
         if stores_df is None or stores_df.is_empty():
-            msg = "Sales export skipped: no stores found in rps.store."
+            msg = "Sales export skipped: no active stores found in rps.store."
             logger.warning(msg)
             await _update_run(run_id, status="skipped", finished_at=now_pkt())
             _active_run_id = None
@@ -179,7 +179,10 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
                 async with session.begin():
                     await write_log(session, activity_type="sales_export", status="skipped", details=msg)
             return {"run_id": run_id, "status": "skipped"}
-        store_numbers: list[int] = [int(row[0]) for row in stores_df.rows()]
+        store_list: list[tuple[int, str | None]] = [
+            (int(row[0]), str(row[1]) if row[1] is not None else None)
+            for row in stores_df.rows()
+        ]
     except Exception as exc:
         msg = f"Sales export: failed to fetch store list: {exc}"
         logger.error(msg)
@@ -191,7 +194,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
                 await write_log(session, activity_type="sales_export", status="failed", details=msg)
         return {"run_id": run_id, "status": "failed", "error": msg}
 
-    total_stores = len(store_numbers)
+    total_stores = len(store_list)
     await _update_run(run_id, total_stores=total_stores)
     _progress[run_id] = {"total": total_stores, "done": 0,
                          "current_store": None, "status": "running"}
@@ -200,7 +203,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
     timestamp = started_at.strftime('%Y%m%d_%H%M%S')
     results: list[dict] = []
 
-    for idx, store_no in enumerate(store_numbers):
+    for idx, (store_no, store_name) in enumerate(store_list):
         # Check cancellation before each store
         if _is_cancelled(run_id):
             logger.info("Export run %s cancelled at store %s.", run_id, store_no)
@@ -226,6 +229,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
             id=str(_uuid.uuid4()),
             run_id=run_id,
             store_no=store_no,
+            store_name=store_name,
             filename=filename,
             ftp_path=export_path,
             status="processing",
