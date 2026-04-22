@@ -165,9 +165,29 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
 
     # ── Fetch store list ────────────────────────────────────────────────────
     try:
+        # Step 1: resolve the subsidiary SID for sbs_no = 1
+        sbs_df = await run_query(
+            oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
+            "SELECT sid FROM rps.subsidiary WHERE sbs_no = 1",
+        )
+        if sbs_df is None or sbs_df.is_empty():
+            msg = "Sales export skipped: no subsidiary found with sbs_no = 1 in rps.subsidiary."
+            logger.warning(msg)
+            await _update_run(run_id, status="skipped", finished_at=now_pkt())
+            _active_run_id = None
+            _progress.pop(run_id, None)
+            async with get_session() as session:
+                async with session.begin():
+                    await write_log(session, activity_type="sales_export", status="skipped", details=msg)
+            return {"run_id": run_id, "status": "skipped"}
+
+        sbs_sid = str(sbs_df.rows()[0][0])
+        logger.info("Resolved subsidiary SID: %s", sbs_sid)
+
+        # Step 2: fetch active stores for that subsidiary
         stores_df = await run_query(
             oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
-            "SELECT store_no, store_name FROM rps.store WHERE active = 1 AND sbs_no = 1",
+            f"SELECT store_no, store_name FROM rps.store WHERE active = 1 AND sbs_sid = '{sbs_sid}'",
         )
         if stores_df is None or stores_df.is_empty():
             msg = "Sales export skipped: no active stores found in rps.store."
@@ -179,6 +199,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
                 async with session.begin():
                     await write_log(session, activity_type="sales_export", status="skipped", details=msg)
             return {"run_id": run_id, "status": "skipped"}
+
         store_list: list[tuple[int, str | None]] = [
             (int(row[0]), str(row[1]) if row[1] is not None else None)
             for row in stores_df.rows()
