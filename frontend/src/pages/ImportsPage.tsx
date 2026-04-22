@@ -322,6 +322,31 @@ function ItemMasterTab() {
   const [search, setSearch]       = useState('')
   const [detail, setDetail]       = useState<DocItem | null>(null)
   const [selectedBatch, setSelectedBatch] = useState<string>('')
+  const [uploading, setUploading] = useState(false)
+  const [toast, setToast]         = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await apiClient.post('/api/item-master/import-csv', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      const d = res.data
+      setToast({ severity: 'success', msg: `Done — ${d.total} rows, ${d.created} created, ${d.updated} updated, ${d.errors} errors` })
+      qc.invalidateQueries({ queryKey: ['im-batches'] })
+      qc.invalidateQueries({ queryKey: ['imports-im'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+      setToast({ severity: 'error', msg })
+    } finally {
+      setUploading(false)
+    }
+  }
 
   // ── Batches list ─────────────────────────────────────────────────────────
   const { data: batches, isFetching: batchFetching } = useQuery<Batch[]>({
@@ -441,6 +466,16 @@ function ItemMasterTab() {
           </Select>
         </FormControl>
 
+        {/* Manual CSV upload */}
+        <Tooltip title="Upload CSV manually">
+          <Button component="label" size="small" variant="contained" disabled={uploading}
+            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+              bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
+            <input type="file" accept=".csv" hidden onChange={handleUpload} />
+          </Button>
+        </Tooltip>
+
         <Tooltip title="Refresh">
           <IconButton size="small"
             onClick={() => {
@@ -542,6 +577,14 @@ function ItemMasterTab() {
       </Box>
 
       <DetailDialog doc={detail} onClose={() => setDetail(null)} />
+
+      <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast?.severity ?? 'info'} onClose={() => setToast(null)}
+          sx={{ fontSize: '0.8rem' }}>
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

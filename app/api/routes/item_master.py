@@ -55,6 +55,34 @@ async def preview_excel(
     }
 
 
+@router.post("/import-csv")
+async def import_csv(
+    file: UploadFile = File(...),
+    _: str = Depends(get_current_user),
+):
+    """
+    Manual CSV upload — runs the full item master pipeline immediately.
+
+    Accepts the same CSV format produced by FTP polling.
+    Returns a summary with total, created, updated, and error counts.
+    """
+    from app.services.item_master_service import process_csv_batch
+    from app.core.timezone import now_pkt
+
+    raw = await file.read()
+    base_name = file.filename or "upload.csv"
+    batch_key = f"{base_name}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
+    try:
+        result = await process_csv_batch(raw, source_file=batch_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Item master CSV import failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return result
+
+
 @router.post("/import")
 async def import_excel(
     file: UploadFile = File(...),
