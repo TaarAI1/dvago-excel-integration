@@ -518,7 +518,8 @@ def build_payload(
 
     # These fields must always be integers, not strings or floats
     for _int_key in ("useqtydecimals", "qtypercase",
-                     "udf1float", "udf2float", "udf3float"):
+                     "udf1float", "udf2float", "udf3float",
+                     "forceorigtax", "noninventory", "orderable"):
         if _int_key in inv_item and inv_item[_int_key] is not None:
             try:
                 inv_item[_int_key] = int(float(inv_item[_int_key]))
