@@ -203,10 +203,13 @@ def parse_excel(file_bytes: bytes) -> list[dict]:
         # Build row dict by column name; columns not present in the header are
         # ignored, so extra trailing cells never cause an IndexError.
         rd = {col_map[i]: v for i, v in enumerate(row_vals) if i in col_map}
-        upc = rd.get("UPC")
-        if not upc:
+        upc_raw = rd.get("UPC")
+        upc_str = str(upc_raw).strip() if upc_raw else ""
+        # Skip completely blank rows (no UPC and no description at all)
+        desc = str(rd.get("DESCRIPTION1") or rd.get("DESCRIPTION") or "").strip()
+        if not upc_str and not desc:
             continue
-        rd["UPC"] = str(upc).strip()
+        rd["UPC"] = upc_str          # "" when absent — payload builder will omit it
         rows_out.append(rd)
 
     wb.close()
@@ -482,7 +485,8 @@ def build_payload(
     inv_item.update(sid_overrides)
 
     # These fields must always be doubles (float), not strings
-    for _float_key in ("cost", "maxdiscperc1", "maxdiscperc2"):
+    for _float_key in ("cost", "maxdiscperc1", "maxdiscperc2",
+                       "udf1float", "udf2float", "udf3float"):
         if _float_key in inv_item and inv_item[_float_key] is not None:
             try:
                 inv_item[_float_key] = float(inv_item[_float_key])
@@ -574,7 +578,8 @@ async def process_row(
     pref_reason_cache: dict,
     store_cache: dict,
 ) -> dict:
-    upc = row.get("UPC", "")
+    upc = str(row.get("UPC") or "").strip()
+    has_upc = bool(upc)
     result: dict = {"upc": upc, "action": None, "sid": None, "ok": False, "error": None,
                     "description": row.get("DESCRIPTION1") or row.get("DESCRIPTION") or ""}
     dcs_debug: dict = {}
@@ -614,13 +619,17 @@ async def process_row(
         store_no_val    = str(row.get("STORE_NO") or "1").strip()
         store_sid_val   = await _store_sid(store_no_val, sbssid_val, store_cache, oc)
 
-        # ── 6. Check item by UPC ─────────────────────────────────────────────
-        check_resp = await http.get(
-            f"{base_url}/api/backoffice/inventory",
-            params={"filter": f'(upc,eq,"{upc}")', "cols": "*,invnextend.*"},
-            headers=rp_headers,
-        )
-        check_data = check_resp.json().get("data") or []
+        # ── 6. Check item by UPC (skip when UPC is empty — always create) ────
+        if has_upc:
+            check_resp = await http.get(
+                f"{base_url}/api/backoffice/inventory",
+                params={"filter": f'(upc,eq,"{upc}")', "cols": "*,invnextend.*"},
+                headers=rp_headers,
+            )
+            check_data = check_resp.json().get("data") or []
+        else:
+            # No UPC supplied — RetailPro will assign one; always create
+            check_data = []
 
         # dcssid and vendsid are always included (null is valid and expected in both
         # PrimaryItemDefinition and InventoryItems).  taxcodesid / sbssid are only
@@ -653,7 +662,7 @@ async def process_row(
             )
             action = "created"
 
-        # ── 5. Upsert ────────────────────────────────────────────────────────
+        # ── 7. Upsert ────────────────────────────────────────────────────────
         save_resp = await http.post(
             f"{base_url}/api/backoffice/inventory",
             params={"action": "InventorySaveItems"},
@@ -667,18 +676,25 @@ async def process_row(
         # Success: errors is null AND data array is non-empty
         ok = (api_errors is None) and (len(saved_data) > 0)
 
-        # Extract SID from data[0].inventoryitems[0].sid (lowercase keys in response)
+        # Extract SID and UPC from the response
         sid = None
+        resp_upc: Optional[str] = None
         if saved_data:
             inv_items = saved_data[0].get("inventoryitems") or []
             if inv_items:
-                sid = inv_items[0].get("sid")
+                sid      = inv_items[0].get("sid")
+                resp_upc = inv_items[0].get("upc") or None
             if not sid:
                 sid = saved_data[0].get("newstylesid")
+
+        # When UPC was empty use whatever RetailPro assigned in the response
+        final_upc = upc or resp_upc or ""
 
         if ok:
             result.update({
                 "action": action, "sid": sid, "ok": True,
+                "upc": final_upc,
+                "resp_upc": resp_upc,
                 "api_response": save_json,
                 "_dcs_debug": dcs_debug,
                 "_vend_debug": vend_debug,
@@ -714,6 +730,11 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
 
     # Store the serialisable row dict (convert datetime → str)
     safe_row = {k: (_to_json(v)) for k, v in row.items()}
+
+    # When UPC was empty in the source file but RetailPro returned one, save it
+    # so the grid can display it under the UPC column.
+    if ok and result.get("resp_upc") and not safe_row.get("UPC"):
+        safe_row["UPC"] = result["resp_upc"]
 
     import json as _json
 
@@ -771,9 +792,11 @@ def parse_csv_item_master(file_bytes: bytes) -> list[dict]:
     for row in reader:
         normalised = {k.strip().upper(): v for k, v in row.items() if k}
         upc = str(normalised.get("UPC", "")).strip()
-        if not upc:
+        # Skip completely blank rows (no UPC and no description)
+        desc = str(normalised.get("DESCRIPTION1", "") or normalised.get("DESCRIPTION", "")).strip()
+        if not upc and not desc:
             continue
-        normalised["UPC"] = upc
+        normalised["UPC"] = upc      # "" when absent — payload builder will omit it
         rows_out.append(normalised)
     return rows_out
 
