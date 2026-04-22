@@ -216,6 +216,7 @@ export default function ActivityLog() {
             <MenuItem value="ftp_poll">FTP Poll</MenuItem>
             <MenuItem value="item_master">Item Master</MenuItem>
             <MenuItem value="qty_adjustment">QTY Adjustment</MenuItem>
+            <MenuItem value="price_adjustment">Price Adjustment</MenuItem>
             <MenuItem value="sales_export">Sales Export</MenuItem>
             <MenuItem value="csv_parse">CSV Parse</MenuItem>
             <MenuItem value="api_call">API Call</MenuItem>
