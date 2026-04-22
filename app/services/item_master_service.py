@@ -485,16 +485,16 @@ def build_payload(
     inv_item.update(sid_overrides)
 
     # These fields must always be doubles (float), not strings
-    for _float_key in ("cost", "maxdiscperc1", "maxdiscperc2",
-                       "udf1float", "udf2float", "udf3float"):
+    for _float_key in ("cost", "maxdiscperc1", "maxdiscperc2"):
         if _float_key in inv_item and inv_item[_float_key] is not None:
             try:
                 inv_item[_float_key] = float(inv_item[_float_key])
             except (ValueError, TypeError):
                 pass
 
-    # These fields must always be integers, not strings
-    for _int_key in ("useqtydecimals", "qtypercase"):
+    # These fields must always be integers, not strings or floats
+    for _int_key in ("useqtydecimals", "qtypercase",
+                     "udf1float", "udf2float", "udf3float"):
         if _int_key in inv_item and inv_item[_int_key] is not None:
             try:
                 inv_item[_int_key] = int(float(inv_item[_int_key]))
