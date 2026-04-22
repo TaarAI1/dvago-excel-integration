@@ -35,6 +35,28 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 900
 DEFAULT_PRICE_LEVEL = 2
 
+# ── In-memory cancel state ────────────────────────────────────────────────────
+_active_import_id: Optional[str] = None
+_cancel_requests: set = set()
+
+
+def get_active_import_id() -> Optional[str]:
+    return _active_import_id
+
+
+def request_cancel_import() -> bool:
+    """Signal the running import to stop after the current store/batch finishes."""
+    global _active_import_id
+    if not _active_import_id:
+        return False
+    _cancel_requests.add(_active_import_id)
+    logger.info("Cancel requested for price adjustment import %s", _active_import_id)
+    return True
+
+
+def _is_import_cancelled(import_id: str) -> bool:
+    return import_id in _cancel_requests
+
 
 # ── CSV parsing ──────────────────────────────────────────────────────────────
 
@@ -465,12 +487,21 @@ async def process_price_adjustment_csv(
     file_bytes: bytes,
     source_file: str = "price_adjustment.csv",
 ) -> dict:
-    """Full pipeline: parse CSV → group by store → process in 900-item batches."""
+    """
+    Full pipeline: parse CSV → group by store → process in 900-item batches.
+    Supports cooperative cancellation via request_cancel_import().
+    """
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
+    global _active_import_id
+    import_id = str(_uuid.uuid4())
+    _active_import_id = import_id
+    _cancel_requests.discard(import_id)
+
     rows = parse_price_adjustment_csv(file_bytes)
     if not rows:
+        _active_import_id = None
         return {"ok": False, "error": "No data rows found (all rows missing SCANUPC).", "docs": []}
 
     oc = {
@@ -498,10 +529,18 @@ async def process_price_adjustment_csv(
     price_lvl_sid_cache: dict = {}
     item_sid_cache: dict = {}
 
+    cancelled = False
     all_docs: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True) as http:
             for store_code, store_rows in store_groups.items():
+                if _is_import_cancelled(import_id):
+                    logger.info(
+                        "Price adjustment import %s cancelled — stopped after %d stores",
+                        import_id, len(all_docs),
+                    )
+                    cancelled = True
+                    break
                 docs = await _process_store_batch(
                     store_code=store_code,
                     store_name=store_names.get(store_code, ""),
@@ -519,6 +558,9 @@ async def process_price_adjustment_csv(
                 all_docs.extend(docs)
     finally:
         await stand_session(base_url, auth_session)
+        if _active_import_id == import_id:
+            _active_import_id = None
+        _cancel_requests.discard(import_id)
 
     total_docs   = len(all_docs)
     posted_docs  = sum(1 for d in all_docs if d.get("status") == "posted")
@@ -528,12 +570,13 @@ async def process_price_adjustment_csv(
     posted_items = sum(d.get("posted_count", 0) for d in all_docs)
 
     return {
-        "ok": True,
-        "total_rows": len(rows),
-        "total_docs": total_docs,
-        "posted_docs": posted_docs,
+        "ok":           True,
+        "cancelled":    cancelled,
+        "total_rows":   len(rows),
+        "total_docs":   total_docs,
+        "posted_docs":  posted_docs,
         "partial_docs": partial_docs,
-        "error_docs": error_docs,
-        "total_items": total_items,
+        "error_docs":   error_docs,
+        "total_items":  total_items,
         "posted_items": posted_items,
     }

@@ -328,6 +328,14 @@ function ItemMasterTab() {
   const [toast, setToast]         = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
   const abortRef                  = useRef<AbortController | null>(null)
 
+  // Poll status endpoint — catches both manual uploads AND FTP-triggered runs
+  const { data: runStatus } = useQuery<{ running: boolean }>({
+    queryKey: ['im-status'],
+    queryFn: () => apiClient.get('/api/item-master/status').then(r => r.data),
+    refetchInterval: 3_000,
+  })
+  const isRunning = uploading || !!runStatus?.running
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -371,7 +379,7 @@ function ItemMasterTab() {
     setKilling(true)
     try {
       await apiClient.post('/api/item-master/kill')
-    } catch { /* ignore — abort below cleans up the UI */ }
+    } catch { /* ignore */ }
     abortRef.current?.abort()
   }
 
@@ -406,7 +414,7 @@ function ItemMasterTab() {
   const { data, isLoading, isFetching } = useQuery<DocsResponse>({
     queryKey: ['imports-im', params],
     queryFn: () => apiClient.get('/api/documents', { params }).then(r => r.data),
-    refetchInterval: uploading ? 3_000 : 30_000,
+    refetchInterval: isRunning ? 3_000 : 30_000,
     enabled: !!selectedBatch,
   })
 
@@ -494,7 +502,7 @@ function ItemMasterTab() {
         </FormControl>
 
         {/* Manual CSV upload / Kill */}
-        {uploading ? (
+        {isRunning ? (
           <Box sx={{ display: 'flex', gap: 0.75 }}>
             <Button size="small" variant="contained" disabled
               sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
@@ -834,29 +842,60 @@ function QtyAdjustmentTab() {
   const [page, setPage]                   = useState(0)
   const pageSize                           = 100
   const [uploading, setUploading]         = useState(false)
-  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+  const [killing, setKilling]             = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
+  const abortRef                          = useRef<AbortController | null>(null)
+
+  const { data: runStatus } = useQuery<{ running: boolean }>({
+    queryKey: ['qa-status'],
+    queryFn: () => apiClient.get('/api/qty-adjustment/status').then(r => r.data),
+    refetchInterval: 3_000,
+  })
+  const isRunning = uploading || !!runStatus?.running
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    const controller = new AbortController()
+    abortRef.current = controller
     setUploading(true)
+    setKilling(false)
     try {
       const form = new FormData()
       form.append('file', file)
       const res = await apiClient.post('/api/qty-adjustment/import', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
       })
       const d = res.data
-      setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      if (d.cancelled) {
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+      } else {
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      }
       qc.invalidateQueries({ queryKey: ['qa-batches'] })
       qc.invalidateQueries({ queryKey: ['qa-docs'] })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
-      setToast({ severity: 'error', msg })
+      const isCancelled = (err as { name?: string })?.name === 'CanceledError'
+                       || (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isCancelled) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+        setToast({ severity: 'error', msg })
+      }
+      qc.invalidateQueries({ queryKey: ['qa-batches'] })
+      qc.invalidateQueries({ queryKey: ['qa-docs'] })
     } finally {
+      abortRef.current = null
       setUploading(false)
+      setKilling(false)
     }
+  }
+
+  const handleKill = async () => {
+    setKilling(true)
+    try { await apiClient.post('/api/qty-adjustment/kill') } catch { /* ignore */ }
+    abortRef.current?.abort()
   }
 
   const { data: batches, isFetching: batchFetching } = useQuery<QtyAdjBatch[]>({
@@ -881,7 +920,7 @@ function QtyAdjustmentTab() {
   const { data, isLoading, isFetching } = useQuery<{ total: number; items: QtyAdjDoc[] }>({
     queryKey: ['qa-docs', params],
     queryFn: () => apiClient.get('/api/qty-adjustment/docs', { params }).then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: isRunning ? 3_000 : 30_000,
     enabled: !!selectedBatch,
   })
 
@@ -950,15 +989,37 @@ function QtyAdjustmentTab() {
             <MenuItem value="error">Error</MenuItem>
           </Select>
         </FormControl>
-        {/* Manual upload */}
-        <Tooltip title="Upload CSV manually">
-          <Button component="label" size="small" variant="contained" disabled={uploading}
-            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
-              bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
-            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
-            <input type="file" accept=".csv" hidden onChange={handleUpload} />
-          </Button>
-        </Tooltip>
+        {/* Manual CSV upload / Kill */}
+        {isRunning ? (
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            <Button size="small" variant="contained" disabled
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#1a56db', pointerEvents: 'none' }}>
+              <CircularProgress size={12} sx={{ color: 'white', mr: 0.75 }} />
+              Processing…
+            </Button>
+            <Tooltip title="Stop import after current store">
+              <Button size="small" variant="contained" disabled={killing}
+                onClick={handleKill}
+                startIcon={killing
+                  ? <CircularProgress size={12} sx={{ color: 'white' }} />
+                  : <StopCircleOutlinedIcon sx={{ fontSize: 15 }} />}
+                sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                  bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+                {killing ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title="Upload CSV manually">
+            <Button component="label" size="small" variant="contained"
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              Upload CSV
+              <input type="file" accept=".csv" hidden onChange={handleUpload} />
+            </Button>
+          </Tooltip>
+        )}
 
         <Tooltip title="Refresh">
           <IconButton size="small"
@@ -1244,29 +1305,60 @@ function PriceAdjustmentTab() {
   const [page, setPage]                   = useState(0)
   const pageSize                           = 100
   const [uploading, setUploading]         = useState(false)
-  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+  const [killing, setKilling]             = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
+  const abortRef                          = useRef<AbortController | null>(null)
+
+  const { data: runStatus } = useQuery<{ running: boolean }>({
+    queryKey: ['pa-status'],
+    queryFn: () => apiClient.get('/api/price-adjustment/status').then(r => r.data),
+    refetchInterval: 3_000,
+  })
+  const isRunning = uploading || !!runStatus?.running
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    const controller = new AbortController()
+    abortRef.current = controller
     setUploading(true)
+    setKilling(false)
     try {
       const form = new FormData()
       form.append('file', file)
       const res = await apiClient.post('/api/price-adjustment/import', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
       })
       const d = res.data
-      setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      if (d.cancelled) {
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+      } else {
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      }
       qc.invalidateQueries({ queryKey: ['pa-batches'] })
       qc.invalidateQueries({ queryKey: ['pa-docs'] })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
-      setToast({ severity: 'error', msg })
+      const isCancelled = (err as { name?: string })?.name === 'CanceledError'
+                       || (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isCancelled) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+        setToast({ severity: 'error', msg })
+      }
+      qc.invalidateQueries({ queryKey: ['pa-batches'] })
+      qc.invalidateQueries({ queryKey: ['pa-docs'] })
     } finally {
+      abortRef.current = null
       setUploading(false)
+      setKilling(false)
     }
+  }
+
+  const handleKill = async () => {
+    setKilling(true)
+    try { await apiClient.post('/api/price-adjustment/kill') } catch { /* ignore */ }
+    abortRef.current?.abort()
   }
 
   const { data: batches, isFetching: batchFetching } = useQuery<PriceAdjBatch[]>({
@@ -1291,7 +1383,7 @@ function PriceAdjustmentTab() {
   const { data, isLoading, isFetching } = useQuery<{ total: number; items: PriceAdjDoc[] }>({
     queryKey: ['pa-docs', params],
     queryFn: () => apiClient.get('/api/price-adjustment/docs', { params }).then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: isRunning ? 3_000 : 30_000,
     enabled: !!selectedBatch,
   })
 
@@ -1360,14 +1452,37 @@ function PriceAdjustmentTab() {
             <MenuItem value="error">Error</MenuItem>
           </Select>
         </FormControl>
-        <Tooltip title="Upload CSV manually">
-          <Button component="label" size="small" variant="contained" disabled={uploading}
-            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
-              bgcolor: '#7c3aed', '&:hover': { bgcolor: '#6d28d9' } }}>
-            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
-            <input type="file" accept=".csv" hidden onChange={handleUpload} />
-          </Button>
-        </Tooltip>
+        {/* Manual CSV upload / Kill */}
+        {isRunning ? (
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            <Button size="small" variant="contained" disabled
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#7c3aed', pointerEvents: 'none' }}>
+              <CircularProgress size={12} sx={{ color: 'white', mr: 0.75 }} />
+              Processing…
+            </Button>
+            <Tooltip title="Stop import after current store">
+              <Button size="small" variant="contained" disabled={killing}
+                onClick={handleKill}
+                startIcon={killing
+                  ? <CircularProgress size={12} sx={{ color: 'white' }} />
+                  : <StopCircleOutlinedIcon sx={{ fontSize: 15 }} />}
+                sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                  bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+                {killing ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title="Upload CSV manually">
+            <Button component="label" size="small" variant="contained"
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#7c3aed', '&:hover': { bgcolor: '#6d28d9' } }}>
+              Upload CSV
+              <input type="file" accept=".csv" hidden onChange={handleUpload} />
+            </Button>
+          </Tooltip>
+        )}
         <Tooltip title="Refresh">
           <IconButton size="small"
             onClick={() => {

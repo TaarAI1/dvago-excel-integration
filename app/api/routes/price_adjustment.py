@@ -5,6 +5,8 @@ GET  /api/price-adjustment/batches   – one row per source_file with counts
 GET  /api/price-adjustment/docs      – paginated list of adjustment documents
 GET  /api/price-adjustment/docs/{id} – single document detail
 POST /api/price-adjustment/import    – manual CSV upload trigger
+GET  /api/price-adjustment/status    – whether an import is currently running
+POST /api/price-adjustment/kill      – cancel the running import after current store
 """
 import logging
 from typing import Optional
@@ -107,6 +109,25 @@ async def get_price_adj_doc(doc_id: str, _: str = Depends(get_current_user)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
     return price_adj_doc_to_response(doc)
+
+
+@router.get("/status")
+async def import_status(_: str = Depends(get_current_user)):
+    """Return whether a price adjustment import is currently running."""
+    from app.services.price_adjustment_service import get_active_import_id
+    active = get_active_import_id()
+    return {"running": active is not None, "import_id": active}
+
+
+@router.post("/kill")
+async def kill_import(_: str = Depends(get_current_user)):
+    """Cancel the running import — stops after the current store finishes."""
+    from app.services.price_adjustment_service import request_cancel_import, get_active_import_id
+    active = get_active_import_id()
+    if not active:
+        return {"cancelled": False, "message": "No import is currently running."}
+    request_cancel_import()
+    return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current store completes."}
 
 
 @router.post("/import")
