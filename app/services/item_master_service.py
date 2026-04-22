@@ -164,6 +164,79 @@ INVNEXTEND_MAP: dict[str, str] = {
     "UDF2_LARGE_STRING": "udf2largestring",
 }
 
+# ── Field-type schema (from RetailPro API data-type definitions) ───────────────
+# Maps each JSON payload field name to its required Python type category.
+# Used by build_payload to coerce every value before sending.
+# Omitted fields are left as-is (string / datetime handled by _to_json).
+FIELD_TYPES: dict[str, str] = {
+    # ── int64 ──────────────────────────────────────────────────────────────────
+    "sid":                  "int",
+    "controllersid":        "int",
+    "tenantsid":            "int",
+    "invnitemuid":          "int",
+    "sbssid":               "int",
+    "stylesid":             "int",
+    "dcssid":               "int",
+    "vendsid":              "int",
+    "currencysid":          "int",
+    "taxcodesid":           "int",
+    "commsid":              "int",
+    "discschedulesid":      "int",
+    "scalesid":             "int",
+    "upc":                  "int",
+    "activestoresid":       "int",
+    "activepricelevelsid":  "int",
+    "activeseasonsid":      "int",
+    "docitemsid":           "int",
+    # ── int32 ──────────────────────────────────────────────────────────────────
+    "rowversion":           "int",
+    "udf1float":            "int",
+    "udf2float":            "int",
+    "udf3float":            "int",
+    "itemno":               "int",
+    "vendorid":             "int",
+    "scaleno":              "int",
+    # ── int16 ──────────────────────────────────────────────────────────────────
+    "useqtydecimals":       "int",
+    "serialtype":           "int",
+    "lottype":              "int",
+    "kittype":              "int",
+    "itemstate":            "int",
+    "publishstatus":        "int",
+    "sbsno":                "int",
+    # ── float ──────────────────────────────────────────────────────────────────
+    "cost":                 "float",
+    "spif":                 "float",
+    "fccost":               "float",
+    "fstprice":             "float",
+    "lastrcvdcost":         "float",
+    "qtypercase":           "float",
+    "maxdiscperc1":         "float",
+    "maxdiscperc2":         "float",
+    "promoqtydiscweight":   "float",
+    "ltypriceinpoints":     "float",
+    "ltypointsearned":      "float",
+    "minordqty":            "float",
+    "vendorlistcost":       "float",
+    "tradediscpercent":     "float",
+    "height":               "float",
+    "length":               "float",
+    "width":                "float",
+    "docqty":               "float",
+    "doccaseqty":           "float",
+    "docprice":             "float",
+    "doccost":              "float",
+    # ── boolean ────────────────────────────────────────────────────────────────
+    "orderable":            "bool",
+    "regional":             "bool",
+    "active":               "bool",
+    "promoinvenexclude":    "bool",
+    "noninventory":         "bool",
+    "noncommitted":         "bool",
+    "forceorigtax":         "bool",
+    "specialorder":         "bool",
+}
+
 # All known column names used for header-row auto-detection
 _KNOWN_COLUMNS: set[str] = (
     set(MAIN_FIELD_MAP)
@@ -508,31 +581,19 @@ def build_payload(
     # Inject computed SIDs (overwrite whatever came from Excel)
     inv_item.update(sid_overrides)
 
-    # These fields must always be doubles (float), not strings
-    for _float_key in ("cost", "maxdiscperc1", "maxdiscperc2"):
-        if _float_key in inv_item and inv_item[_float_key] is not None:
-            try:
-                inv_item[_float_key] = float(inv_item[_float_key])
-            except (ValueError, TypeError):
-                pass
-
-    # These fields must always be integers, not strings or floats
-    for _int_key in ("useqtydecimals", "qtypercase",
-                     "udf1float", "udf2float", "udf3float",
-                     "forceorigtax", "noninventory", "orderable"):
-        if _int_key in inv_item and inv_item[_int_key] is not None:
-            try:
-                inv_item[_int_key] = int(float(inv_item[_int_key]))
-            except (ValueError, TypeError):
-                pass
-
-    # regional and active: 0 → false, 1 → true
-    for _bool_key in ("regional", "active"):
-        if _bool_key in inv_item and inv_item[_bool_key] is not None:
-            try:
-                inv_item[_bool_key] = bool(int(float(inv_item[_bool_key])))
-            except (ValueError, TypeError):
-                pass
+    # Coerce every field to its declared RetailPro API data type
+    for _key, _dtype in FIELD_TYPES.items():
+        if _key not in inv_item or inv_item[_key] is None:
+            continue
+        try:
+            if _dtype == "int":
+                inv_item[_key] = int(float(inv_item[_key]))
+            elif _dtype == "float":
+                inv_item[_key] = float(inv_item[_key])
+            elif _dtype == "bool":
+                inv_item[_key] = bool(int(float(inv_item[_key])))
+        except (ValueError, TypeError):
+            pass
 
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
