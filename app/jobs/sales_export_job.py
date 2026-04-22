@@ -186,7 +186,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
     except Exception as exc:
         msg = f"Sales export: failed to fetch store list: {exc}"
         logger.error(msg)
-        await _update_run(run_id, status="failed", finished_at=now_pkt())
+        await _update_run(run_id, status="failed", finished_at=now_pkt(), error_message=str(exc))
         _active_run_id = None
         _progress.pop(run_id, None)
         async with get_session() as session:

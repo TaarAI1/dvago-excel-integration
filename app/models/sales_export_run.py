@@ -15,6 +15,7 @@ class SalesExportRun(Base):
     status:          Mapped[str]       = mapped_column(String(20), default="running", nullable=False, index=True)
     total_stores:    Mapped[int]       = mapped_column(Integer, default=0, nullable=False)
     processed_stores: Mapped[int]     = mapped_column(Integer, default=0, nullable=False)
+    error_message:   Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at:      Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     finished_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -47,6 +48,7 @@ def run_to_response(r: SalesExportRun) -> dict:
         "status":           r.status,
         "total_stores":     r.total_stores,
         "processed_stores": r.processed_stores,
+        "error_message":    r.error_message,
         "started_at":       r.started_at.isoformat() if r.started_at else None,
         "finished_at":      r.finished_at.isoformat() if r.finished_at else None,
     }

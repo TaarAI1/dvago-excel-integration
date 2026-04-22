@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import logging
@@ -28,6 +29,10 @@ async def connect_db(database_url: str):
     async with engine.begin() as conn:
         import app.models  # noqa: registers all models with Base.metadata
         await conn.run_sync(Base.metadata.create_all)
+        # Additive column migrations — safe to run on every startup
+        await conn.execute(text(
+            "ALTER TABLE sales_export_runs ADD COLUMN IF NOT EXISTS error_message TEXT"
+        ))
 
     logger.info("Connected to PostgreSQL and tables ensured.")
 

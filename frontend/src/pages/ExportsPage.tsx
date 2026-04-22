@@ -23,6 +23,7 @@ interface ExportRun {
   status: string
   total_stores: number
   processed_stores: number
+  error_message: string | null
   started_at: string
   finished_at: string | null
 }
@@ -458,9 +459,29 @@ function SalesExportTab() {
                 </TableRow>
               ) : stores.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} align="center"
-                    sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
-                    No store records yet — export may still be running.
+                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                    {activeRun?.status === 'failed' && activeRun.error_message ? (
+                      <Box sx={{ maxWidth: 620, mx: 'auto', textAlign: 'left' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+                          <ErrorOutlinedIcon sx={{ fontSize: 15, color: '#b91c1c' }} />
+                          <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#b91c1c',
+                            textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                            Export Failed — Oracle Error
+                          </Typography>
+                        </Box>
+                        <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca',
+                          borderRadius: '6px', p: 1.5 }}>
+                          <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap', color: '#7f1d1d', wordBreak: 'break-word' }}>
+                            {activeRun.error_message}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#9ca3af', fontSize: '0.82rem' }}>
+                        No store records yet — export may still be running.
+                      </Typography>
+                    )}
                   </TableCell>
                 </TableRow>
               ) : stores.map((s, i) => (
