@@ -17,6 +17,7 @@ code/subsidiary is only looked up once.
 """
 import io
 import logging
+import uuid as _uuid_mod
 from typing import Any, Optional
 
 from app.core.timezone import now_pkt
@@ -25,6 +26,29 @@ import httpx
 import openpyxl
 
 logger = logging.getLogger(__name__)
+
+# ── In-memory cancel state (same pattern as sales_export_job) ──────────────────
+# run_id of the currently executing manual import (None when idle)
+_active_import_id: Optional[str] = None
+_cancel_requests: set = set()
+
+
+def get_active_import_id() -> Optional[str]:
+    return _active_import_id
+
+
+def request_cancel_import() -> bool:
+    """Signal the running import to stop after the current row finishes."""
+    global _active_import_id
+    if not _active_import_id:
+        return False
+    _cancel_requests.add(_active_import_id)
+    logger.info("Cancel requested for item master import %s", _active_import_id)
+    return True
+
+
+def _is_import_cancelled(import_id: str) -> bool:
+    return import_id in _cancel_requests
 
 # ── Column → JSON field maps ────────────────────────────────────────────────────
 
@@ -807,12 +831,18 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     """
     Core pipeline shared by Excel and CSV paths:
       auth (once) → per-row processing with shared caches → persist each row.
+    Supports cooperative cancellation via request_cancel_import().
     """
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
     if not rows:
         return {"ok": False, "error": "No data rows found (all rows missing UPC).", "results": []}
+
+    global _active_import_id
+    import_id = str(_uuid_mod.uuid4())
+    _active_import_id = import_id
+    _cancel_requests.discard(import_id)
 
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
@@ -835,10 +865,20 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     pref_reason_cache:  dict = {}
     store_cache:        dict = {}
 
+    cancelled = False
     results: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
             for row in rows:
+                # Check for kill signal before each row
+                if _is_import_cancelled(import_id):
+                    logger.info(
+                        "Item master import %s cancelled — stopped after %d / %d rows",
+                        import_id, len(results), len(rows),
+                    )
+                    cancelled = True
+                    break
+
                 row_result = await process_row(
                     row=row,
                     auth_session=auth_session,
@@ -864,20 +904,25 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
                     "✓" if row_result["ok"] else f"✗ {row_result['error']}",
                 )
     finally:
-        # Always destroy the session after all rows are processed (or on error)
+        # Always destroy the session and clear active state
         await stand_session(base_url, auth_session)
+        if _active_import_id == import_id:
+            _active_import_id = None
+        _cancel_requests.discard(import_id)
 
     created = sum(1 for r in results if r["ok"] and r["action"] == "created")
     updated = sum(1 for r in results if r["ok"] and r["action"] == "updated")
     errors  = sum(1 for r in results if not r["ok"])
 
     return {
-        "ok":      True,
-        "total":   len(results),
-        "created": created,
-        "updated": updated,
-        "errors":  errors,
-        "results": results,
+        "ok":        True,
+        "cancelled": cancelled,
+        "total":     len(results),
+        "of_total":  len(rows),
+        "created":   created,
+        "updated":   updated,
+        "errors":    errors,
+        "results":   results,
     }
 
 

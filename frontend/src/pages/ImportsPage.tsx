@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
@@ -7,6 +7,7 @@ import {
   DialogContent, DialogActions, Alert, Snackbar,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
+import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
@@ -323,29 +324,55 @@ function ItemMasterTab() {
   const [detail, setDetail]       = useState<DocItem | null>(null)
   const [selectedBatch, setSelectedBatch] = useState<string>('')
   const [uploading, setUploading] = useState(false)
-  const [toast, setToast]         = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+  const [killing, setKilling]     = useState(false)
+  const [toast, setToast]         = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
+  const abortRef                  = useRef<AbortController | null>(null)
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    const controller = new AbortController()
+    abortRef.current = controller
     setUploading(true)
+    setKilling(false)
     try {
       const form = new FormData()
       form.append('file', file)
       const res = await apiClient.post('/api/item-master/import-csv', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
       })
       const d = res.data
-      setToast({ severity: 'success', msg: `Done — ${d.total} rows, ${d.created} created, ${d.updated} updated, ${d.errors} errors` })
+      if (d.cancelled) {
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total} of ${d.of_total} rows processed (${d.created} created, ${d.updated} updated, ${d.errors} errors)` })
+      } else {
+        setToast({ severity: 'success', msg: `Done — ${d.total} rows, ${d.created} created, ${d.updated} updated, ${d.errors} errors` })
+      }
       qc.invalidateQueries({ queryKey: ['im-batches'] })
       qc.invalidateQueries({ queryKey: ['imports-im'] })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
-      setToast({ severity: 'error', msg })
+      const isCancelled = (err as { name?: string })?.name === 'CanceledError'
+                       || (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isCancelled) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+        setToast({ severity: 'error', msg })
+      }
+      qc.invalidateQueries({ queryKey: ['im-batches'] })
+      qc.invalidateQueries({ queryKey: ['imports-im'] })
     } finally {
+      abortRef.current = null
       setUploading(false)
+      setKilling(false)
     }
+  }
+
+  const handleKill = async () => {
+    setKilling(true)
+    try {
+      await apiClient.post('/api/item-master/kill')
+    } catch { /* ignore — abort below cleans up the UI */ }
+    abortRef.current?.abort()
   }
 
   // ── Batches list ─────────────────────────────────────────────────────────
@@ -379,7 +406,7 @@ function ItemMasterTab() {
   const { data, isLoading, isFetching } = useQuery<DocsResponse>({
     queryKey: ['imports-im', params],
     queryFn: () => apiClient.get('/api/documents', { params }).then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: uploading ? 3_000 : 30_000,
     enabled: !!selectedBatch,
   })
 
@@ -466,15 +493,37 @@ function ItemMasterTab() {
           </Select>
         </FormControl>
 
-        {/* Manual CSV upload */}
-        <Tooltip title="Upload CSV manually">
-          <Button component="label" size="small" variant="contained" disabled={uploading}
-            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
-              bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
-            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
-            <input type="file" accept=".csv" hidden onChange={handleUpload} />
-          </Button>
-        </Tooltip>
+        {/* Manual CSV upload / Kill */}
+        {uploading ? (
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            <Button size="small" variant="contained" disabled
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#1a56db', pointerEvents: 'none' }}>
+              <CircularProgress size={12} sx={{ color: 'white', mr: 0.75 }} />
+              Processing…
+            </Button>
+            <Tooltip title="Stop import after current row">
+              <Button size="small" variant="contained" disabled={killing}
+                onClick={handleKill}
+                startIcon={killing
+                  ? <CircularProgress size={12} sx={{ color: 'white' }} />
+                  : <StopCircleOutlinedIcon sx={{ fontSize: 15 }} />}
+                sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                  bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+                {killing ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title="Upload CSV manually">
+            <Button component="label" size="small" variant="contained"
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              Upload CSV
+              <input type="file" accept=".csv" hidden onChange={handleUpload} />
+            </Button>
+          </Tooltip>
+        )}
 
         <Tooltip title="Refresh">
           <IconButton size="small"

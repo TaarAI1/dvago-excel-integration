@@ -1,8 +1,11 @@
 """
 Item Master import routes.
 
-POST /api/item-master/preview  – parse Excel, return first 50 rows (no writes)
-POST /api/item-master/import   – full pipeline: DCS/Vendor check-or-create, item upsert
+POST /api/item-master/preview    – parse Excel, return first 50 rows (no writes)
+POST /api/item-master/import-csv – manual CSV upload, full pipeline
+POST /api/item-master/import     – manual Excel upload, full pipeline
+GET  /api/item-master/status     – whether an import is currently running
+POST /api/item-master/kill       – cancel the running import after the current row
 """
 import logging
 
@@ -18,6 +21,25 @@ _ALLOWED_TYPES = {
     "application/vnd.ms-excel",
     "application/octet-stream",
 }
+
+
+@router.get("/status")
+async def import_status(_: str = Depends(get_current_user)):
+    """Return whether a manual import is currently running."""
+    from app.services.item_master_service import get_active_import_id
+    active = get_active_import_id()
+    return {"running": active is not None, "import_id": active}
+
+
+@router.post("/kill")
+async def kill_import(_: str = Depends(get_current_user)):
+    """Cancel the running import — it will stop after the current row finishes."""
+    from app.services.item_master_service import request_cancel_import, get_active_import_id
+    active = get_active_import_id()
+    if not active:
+        return {"cancelled": False, "message": "No import is currently running."}
+    request_cancel_import()
+    return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current row completes."}
 
 
 @router.post("/preview")
