@@ -1427,12 +1427,435 @@ function PriceAdjustmentTab() {
   )
 }
 
+// ── Transfer Slip types ───────────────────────────────────────────────────────
+
+interface TransferSlipDoc {
+  id: string
+  source_file: string | null
+  note: string | null
+  in_store_name: string | null
+  out_store_name: string | null
+  instoresid: string | null
+  insbssid: string | null
+  outstoresid: string | null
+  outsbssid: string | null
+  slip_sid: string | null
+  item_count: number
+  posted_count: number
+  error_count: number
+  status: 'posted' | 'partial' | 'error' | 'pending'
+  error_message: string | null
+  api_create_payload: unknown
+  api_create_response: unknown
+  api_items_payload: unknown
+  api_items_response: unknown
+  api_comment_payload: unknown
+  api_comment_response: unknown
+  api_get_response: unknown
+  api_finalize_payload: unknown
+  api_finalize_response: unknown
+  items_data: Array<{ upc: string; qty: number; item_sid: string | null; ok: boolean; error: string | null }> | null
+  created_at: string
+  posted_at: string | null
+}
+
+interface TransferSlipBatch {
+  source_file: string
+  doc_count: number
+  total_items: number
+  posted_items: number
+  error_items: number
+  latest: string | null
+  posted_docs: number
+  error_docs: number
+}
+
+// ── Transfer Slip detail dialog ───────────────────────────────────────────────
+
+function TransferSlipDetailDialog({ doc, onClose }: { doc: TransferSlipDoc | null; onClose: () => void }) {
+  if (!doc) return null
+
+  const section = (title: string, data: unknown) => {
+    if (!data) return null
+    let text: string
+    try { text = JSON.stringify(data, null, 2) } catch { text = String(data) }
+    return (
+      <Box sx={{ mx: 3, mb: 2 }}>
+        <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+          textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
+          {title}
+        </Typography>
+        <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+          p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+          <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word', lineHeight: 1.6 }}>
+            {text}
+          </Typography>
+        </Box>
+      </Box>
+    )
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth
+      slotProps={{ paper: { sx: { borderRadius: '8px', overflow: 'hidden' } } }}>
+      <Box sx={{
+        bgcolor: doc.status === 'error' ? '#fef2f2' : doc.status === 'posted' ? '#f0fdf4' : '#fff7ed',
+        borderBottom: `2px solid ${doc.status === 'error' ? '#fecaca' : doc.status === 'posted' ? '#bbf7d0' : '#fed7aa'}`,
+        px: 3, py: 2,
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+          <AdjStatusChip status={doc.status} />
+          <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+            {fmt(doc.created_at)}
+          </Typography>
+        </Box>
+        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827', mt: 0.5 }}>
+          Transfer Slip
+        </Typography>
+        <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
+          Note: {doc.note || '—'} &nbsp;·&nbsp;
+          {doc.out_store_name || '—'} → {doc.in_store_name || '—'} &nbsp;·&nbsp;
+          {doc.item_count} items &nbsp;·&nbsp; {doc.posted_count} posted &nbsp;·&nbsp; {doc.error_count} errors
+        </Typography>
+      </Box>
+
+      <DialogContent sx={{ p: 0, maxHeight: '76vh', overflowY: 'auto' }}>
+        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+          <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Summary</Typography>
+          <InfoRow label="Note"          value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.note || '—'}</Typography>} />
+          <InfoRow label="Slip SID"      value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.slip_sid || '—'}</Typography>} />
+          <InfoRow label="In Store"      value={doc.in_store_name  || '—'} />
+          <InfoRow label="Out Store"     value={doc.out_store_name || '—'} />
+          <InfoRow label="In Store SID"  value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.instoresid  || '—'}</Typography>} />
+          <InfoRow label="In SBS SID"    value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.insbssid    || '—'}</Typography>} />
+          <InfoRow label="Out Store SID" value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.outstoresid || '—'}</Typography>} />
+          <InfoRow label="Out SBS SID"   value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.outsbssid   || '—'}</Typography>} />
+          <InfoRow label="Source File"   value={doc.source_file || '—'} />
+          {doc.posted_at && <InfoRow label="Posted At" value={fmt(doc.posted_at)} />}
+        </Box>
+
+        {doc.items_data && doc.items_data.length > 0 && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Items</Typography>
+            <Box sx={{ border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                    {['UPC', 'Qty', 'Item SID', 'Status'].map(h => (
+                      <TableCell key={h} sx={{ ...thSx, py: 0.5 }}>{h}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {doc.items_data.map((item, i) => (
+                    <TableRow key={i}>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>{item.upc}</TableCell>
+                      <TableCell sx={tdSx}>{item.qty}</TableCell>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280' }}>{item.item_sid || '—'}</TableCell>
+                      <TableCell sx={tdSx}>
+                        {item.ok
+                          ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
+                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                        }
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          </Box>
+        )}
+
+        {doc.error_message && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        {section('1. Create Slip — Request',     doc.api_create_payload)}
+        {section('1. Create Slip — Response',    doc.api_create_response)}
+        {section('2. Post Items — Request',      doc.api_items_payload)}
+        {section('2. Post Items — Response',     doc.api_items_response)}
+        {section('3. Post Comment — Request',    doc.api_comment_payload)}
+        {section('3. Post Comment — Response',   doc.api_comment_response)}
+        {section('4. GET Rowversion — Response', doc.api_get_response)}
+        {section('5. Finalize — Request',        doc.api_finalize_payload)}
+        {section('5. Finalize — Response',       doc.api_finalize_response)}
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
+        <Button size="small" variant="outlined" onClick={onClose}
+          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── Transfer Slip tab ─────────────────────────────────────────────────────────
+
+function TransferSlipTab() {
+  const qc = useQueryClient()
+  const [selectedBatch, setSelectedBatch] = useState('')
+  const [status, setStatus]               = useState('')
+  const [detail, setDetail]               = useState<TransferSlipDoc | null>(null)
+  const [page, setPage]                   = useState(0)
+  const pageSize                           = 100
+  const [uploading, setUploading]         = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await apiClient.post('/api/transfer-slip/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      const d = res.data
+      setToast({ severity: 'success', msg: `Done — ${d.total_docs} slips, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      qc.invalidateQueries({ queryKey: ['ts-batches'] })
+      qc.invalidateQueries({ queryKey: ['ts-docs'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+      setToast({ severity: 'error', msg })
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const { data: batches, isFetching: batchFetching } = useQuery<TransferSlipBatch[]>({
+    queryKey: ['ts-batches'],
+    queryFn: () => apiClient.get('/api/transfer-slip/batches').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  useEffect(() => {
+    if (batches && batches.length > 0 && !selectedBatch)
+      setSelectedBatch(batches[0].source_file)
+  }, [batches, selectedBatch])
+
+  const activeBatch = batches?.find(b => b.source_file === selectedBatch)
+
+  const params: Record<string, string | number> = {
+    limit: pageSize, offset: page * pageSize,
+    ...(selectedBatch ? { source_file: selectedBatch } : {}),
+    ...(status        ? { status }                     : {}),
+  }
+
+  const { data, isLoading, isFetching } = useQuery<{ total: number; items: TransferSlipDoc[] }>({
+    queryKey: ['ts-docs', params],
+    queryFn: () => apiClient.get('/api/transfer-slip/docs', { params }).then(r => r.data),
+    refetchInterval: 30_000,
+    enabled: !!selectedBatch,
+  })
+
+  const docs       = data?.items ?? []
+  const totalPages = Math.ceil((data?.total ?? 0) / pageSize)
+
+  return (
+    <Box>
+      {/* Batch selector */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <FolderOutlinedIcon sx={{ fontSize: 15, color: '#9ca3af' }} />
+        <Typography sx={{ fontSize: '0.72rem', color: '#374151', fontWeight: 600 }}>Batch:</Typography>
+        <FormControl size="small" sx={{ minWidth: 280 }}>
+          <Select value={selectedBatch} displayEmpty
+            onChange={e => { setSelectedBatch(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}
+            renderValue={v => {
+              if (!v) return <em style={{ color: '#9ca3af' }}>Select a batch…</em>
+              const b = batches?.find(x => x.source_file === v)
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>{v}</span>
+                  {b && <Typography component="span" sx={{ fontSize: '0.65rem', color: '#9ca3af', ml: 0.5 }}>
+                    ({b.doc_count} slips · {fmt(b.latest)})
+                  </Typography>}
+                </Box>
+              )
+            }}>
+            {(batches ?? []).map(b => (
+              <MenuItem key={b.source_file} value={b.source_file}>
+                <Box sx={{ width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 500 }}>{b.source_file}</Typography>
+                    <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>{fmt(b.latest)}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, mt: 0.25 }}>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#15803d' }}>✓ {b.posted_docs} posted</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#b91c1c' }}>✗ {b.error_docs} errors</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#6b7280' }}>{b.doc_count} slips · {b.total_items} items</Typography>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {batchFetching && <CircularProgress size={12} />}
+      </Box>
+
+      {/* Pills + toolbar */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <Pill label="slips"        value={activeBatch?.doc_count    ?? 0} color="#0ea5e9" />
+        <Pill label="posted slips" value={activeBatch?.posted_docs  ?? 0} color="#22c55e" />
+        <Pill label="error slips"  value={activeBatch?.error_docs   ?? 0} color="#ef4444" />
+        <Pill label="total items"  value={activeBatch?.total_items  ?? 0} color="#6b7280" />
+        <Pill label="posted items" value={activeBatch?.posted_items ?? 0} color="#22c55e" />
+        {isFetching && <CircularProgress size={13} sx={{ ml: 0.5 }} />}
+        <Box sx={{ flexGrow: 1 }} />
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel sx={{ fontSize: '0.78rem' }}>Status</InputLabel>
+          <Select value={status} label="Status"
+            onChange={e => { setStatus(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}>
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="posted">Posted</MenuItem>
+            <MenuItem value="partial">Partial</MenuItem>
+            <MenuItem value="error">Error</MenuItem>
+          </Select>
+        </FormControl>
+        <Tooltip title="Upload CSV manually">
+          <Button component="label" size="small" variant="contained" disabled={uploading}
+            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+              bgcolor: '#0ea5e9', '&:hover': { bgcolor: '#0284c7' } }}>
+            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
+            <input type="file" accept=".csv" hidden onChange={handleUpload} />
+          </Button>
+        </Tooltip>
+        <Tooltip title="Refresh">
+          <IconButton size="small"
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['ts-docs'] })
+              qc.invalidateQueries({ queryKey: ['ts-batches'] })
+            }}
+            sx={{ borderRadius: '4px', border: '1px solid #e5e7eb' }}>
+            <RefreshIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {/* Table — one row per transfer slip */}
+      <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+        <TableContainer>
+          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 900 }}>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                <TableCell sx={thSx} width={44}>#</TableCell>
+                <TableCell sx={thSx} width={130}>Note</TableCell>
+                <TableCell sx={thSx} width={120}>Out Store</TableCell>
+                <TableCell sx={thSx} width={120}>In Store</TableCell>
+                <TableCell sx={thSx} width={160}>Slip SID</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Items</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Posted</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Errors</TableCell>
+                <TableCell sx={thSx} width={85}>Status</TableCell>
+                <TableCell sx={thSx} width={140}>Created At</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {!selectedBatch ? (
+                <TableRow><TableCell colSpan={10} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  Select a batch above to view records.
+                </TableCell></TableRow>
+              ) : isLoading ? (
+                <TableRow><TableCell colSpan={10} align="center" sx={{ py: 6 }}>
+                  <CircularProgress size={22} />
+                </TableCell></TableRow>
+              ) : docs.length === 0 ? (
+                <TableRow><TableCell colSpan={10} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  No transfer slip documents found.
+                </TableCell></TableRow>
+              ) : docs.map((doc, i) => (
+                <TableRow key={doc.id} onClick={() => setDetail(doc)}
+                  sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f0f9ff' }, transition: 'background 0.1s' }}>
+                  <TableCell sx={tdSx}>{page * pageSize + i + 1}</TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.note || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.out_store_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.in_store_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.slip_sid || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center' }}>{doc.item_count}</TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                    {doc.posted_count}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center',
+                    color: doc.error_count > 0 ? '#b91c1c' : '#6b7280',
+                    fontWeight: doc.error_count > 0 ? 600 : 400 }}>
+                    {doc.error_count}
+                  </TableCell>
+                  <TableCell sx={tdSx}><AdjStatusChip status={doc.status} /></TableCell>
+                  <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
+                    {fmt(doc.created_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {(data?.total ?? 0) > pageSize && (
+          <Box sx={{ px: 2, py: 1, borderTop: '1px solid #f3f4f6',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
+              Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, data!.total)} of {data!.total}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button size="small" variant="outlined" disabled={page === 0}
+                onClick={() => setPage(p => p - 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Prev</Button>
+              <Button size="small" variant="outlined" disabled={page >= totalPages - 1}
+                onClick={() => setPage(p => p + 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Next</Button>
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      <TransferSlipDetailDialog doc={detail} onClose={() => setDetail(null)} />
+
+      <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast?.severity ?? 'info'} onClose={() => setToast(null)}
+          sx={{ fontSize: '0.8rem' }}>
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
+    </Box>
+  )
+}
+
 // ── Module tab registry ───────────────────────────────────────────────────────
 
 const MODULE_TABS = [
   { label: 'Item Master',       content: <ItemMasterTab /> },
   { label: 'QTY Adjustment',    content: <QtyAdjustmentTab /> },
   { label: 'Price Adjustment',  content: <PriceAdjustmentTab /> },
+  { label: 'Transfer Slips',    content: <TransferSlipTab /> },
 ]
 
 // ── Page ──────────────────────────────────────────────────────────────────────
