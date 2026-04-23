@@ -132,7 +132,7 @@ async def _get_store_sids(
     key = str(store_code).strip()
     if key not in cache:
         row = await _oracle_row(
-            f"SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{key}'", oc
+            f"SELECT sid, sbs_sid FROM rps.store WHERE store_code = {key}", oc
         )
         if row:
             cache[key] = (str(row[0]) if row[0] else None, str(row[1]) if row[1] else None)
