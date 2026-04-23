@@ -283,6 +283,19 @@ FIELD_TYPES: dict[str, str] = {
     "cmpstrmaxextpricewt":      "float",
 }
 
+# JSON field names whose RetailPro type is datetime.
+# These are only included in the payload when the Excel cell contains an actual
+# Python datetime object.  A bare string like "1" or a plain integer would cause
+# Delphi's date deserialiser to call StrToInt("") on an extracted component and
+# raise "'' is not a valid integer value".
+DATETIME_FIELDS: frozenset[str] = frozenset({
+    "createddatetime", "modifieddatetime", "postdate",
+    "lastsolddate", "markdowndate", "discontinueddate",
+    "udf1date", "udf2date", "udf3date",
+    "sellabledate", "orderabledate",
+    "firstrcvddate", "lastrcvddate",
+})
+
 # All known column names used for header-row auto-detection
 _KNOWN_COLUMNS: set[str] = (
     set(MAIN_FIELD_MAP)
@@ -625,9 +638,18 @@ def build_payload(
         inv_item["sid"] = None
 
     # Map Excel columns → JSON fields (skip None and empty strings)
+    from datetime import datetime as _dt
     for col, json_key in MAIN_FIELD_MAP.items():
-        if col in row and row[col] is not None and str(row[col]).strip() != "" and json_key not in inv_item:
-            inv_item[json_key] = _to_json(row[col])
+        if col not in row or row[col] is None or str(row[col]).strip() == "":
+            continue
+        if json_key in inv_item:
+            continue
+        # Datetime fields must contain an actual datetime object from Excel.
+        # A bare string like "1" or a plain integer causes Delphi's date
+        # deserialiser to crash with "'' is not a valid integer value".
+        if json_key in DATETIME_FIELDS and not isinstance(row[col], _dt):
+            continue
+        inv_item[json_key] = _to_json(row[col])
 
     # Inject computed SIDs (overwrite whatever came from Excel)
     inv_item.update(sid_overrides)
