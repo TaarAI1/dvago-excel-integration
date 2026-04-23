@@ -627,19 +627,32 @@ def build_payload(
     # Inject computed SIDs (overwrite whatever came from Excel)
     inv_item.update(sid_overrides)
 
-    # Coerce every field to its declared RetailPro API data type
+    # activestoresid — resolved from Oracle; set before coercion so it is typed correctly
+    if store_sid:
+        inv_item["activestoresid"] = store_sid
+
+    # Coerce every field to its declared RetailPro API data type.
+    # Empty strings are treated the same as None (nulled out) so they are never
+    # sent as "" for an integer/float/bool field — that would cause the RetailPro
+    # "'' is not a valid integer value" serialiser error.
     for _key, _dtype in FIELD_TYPES.items():
         if _key not in inv_item or inv_item[_key] is None:
             continue
+        raw = inv_item[_key]
+        if isinstance(raw, str) and raw.strip() == "":
+            inv_item[_key] = None
+            continue
         try:
             if _dtype == "int":
-                inv_item[_key] = int(float(inv_item[_key]))
+                # Avoid int(float(x)): float64 only has ~15 significant digits,
+                # which silently truncates int64 SIDs (18-19 digits).
+                inv_item[_key] = int(str(raw).split(".")[0])
             elif _dtype == "float":
-                inv_item[_key] = float(inv_item[_key])
+                inv_item[_key] = float(raw)
             elif _dtype == "bool":
-                inv_item[_key] = bool(int(float(inv_item[_key])))
+                inv_item[_key] = bool(int(float(raw)))
         except (ValueError, TypeError):
-            pass
+            inv_item[_key] = None
 
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
@@ -658,17 +671,25 @@ def build_payload(
 
     inv_item["invnextend"] = [extend]
 
-    # activestoresid — resolved from Oracle (store_no + subsidiary)
-    if store_sid:
-        inv_item["activestoresid"] = store_sid
-
     # ── PrimaryItemDefinition ─────────────────────────────────────────────────
     # Key order: sid → dcssid → vendsid → description1 → description2 → attribute → itemsize
     # dcssid and vendsid are always included (can be null, same as sid).
+    def _coerce_sid(val: Any) -> Optional[int]:
+        """Safely coerce a SID string/number to int without float precision loss."""
+        if val is None:
+            return None
+        s = str(val).strip()
+        if not s or s.lower() == "none":
+            return None
+        try:
+            return int(s.split(".")[0])
+        except (ValueError, TypeError):
+            return None
+
     primary_def: dict = {
-        "sid":    existing_item.get("sid") if existing_item else None,
-        "dcssid": sid_overrides.get("dcssid"),
-        "vendsid": sid_overrides.get("vendsid"),
+        "sid":    _coerce_sid(existing_item.get("sid")) if existing_item else None,
+        "dcssid": _coerce_sid(sid_overrides.get("dcssid")),
+        "vendsid": _coerce_sid(sid_overrides.get("vendsid")),
     }
     for k, v in {
         "description1": inv_item.get("description1"),
@@ -689,9 +710,10 @@ def build_payload(
         "UpdateStylePrice":      False,
     }
     if pref_reason_sid:
-        outer["DefaultReasonSidForQtyMemo"]   = pref_reason_sid
-        outer["DefaultReasonSidForCostMemo"]  = pref_reason_sid
-        outer["DefaultReasonSidForPriceMemo"] = pref_reason_sid
+        reason_int = _coerce_sid(pref_reason_sid)
+        outer["DefaultReasonSidForQtyMemo"]   = reason_int
+        outer["DefaultReasonSidForCostMemo"]  = reason_int
+        outer["DefaultReasonSidForPriceMemo"] = reason_int
     return outer
 
 
