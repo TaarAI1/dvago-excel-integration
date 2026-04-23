@@ -8,7 +8,8 @@ from app.models.qty_adjustment_doc import QtyAdjustmentDoc
 from app.models.price_adjustment_doc import PriceAdjustmentDoc
 from app.models.sales_export_run import SalesExportRun, SalesExportStore
 from app.models.transfer_slip_doc import TransferSlipDoc
+from app.models.grn_doc import GRNDoc
 
 __all__ = ["Document", "ActivityLog", "SystemConfig", "FtpSeenFile", "User", "AppSetting",
            "QtyAdjustmentDoc", "PriceAdjustmentDoc", "SalesExportRun", "SalesExportStore",
-           "TransferSlipDoc"]
+           "TransferSlipDoc", "GRNDoc"]

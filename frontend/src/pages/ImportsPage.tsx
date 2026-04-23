@@ -2013,6 +2013,488 @@ function TransferSlipTab() {
   )
 }
 
+// ── GRN types ─────────────────────────────────────────────────────────────────
+
+interface GRNDoc {
+  id: string
+  source_file: string | null
+  note: string | null
+  store_code: string | null
+  store_name: string | null
+  storesid: string | null
+  sbssid: string | null
+  vendsid: string | null
+  vousid: string | null
+  item_count: number
+  posted_count: number
+  error_count: number
+  status: 'posted' | 'partial' | 'error' | 'pending'
+  error_message: string | null
+  api_create_payload: unknown
+  api_create_response: unknown
+  api_get_rowversion_response: unknown
+  api_vendor_payload: unknown
+  api_vendor_response: unknown
+  api_items_payload: unknown
+  api_items_response: unknown
+  api_comment_payload: unknown
+  api_comment_response: unknown
+  api_get_rowversion2_response: unknown
+  api_finalize_payload: unknown
+  api_finalize_response: unknown
+  items_data: Array<{ upc: string; qty: number; item_sid: string | null; ok: boolean; error: string | null }> | null
+  created_at: string
+  posted_at: string | null
+}
+
+interface GRNBatch {
+  source_file: string
+  doc_count: number
+  total_items: number
+  posted_items: number
+  error_items: number
+  latest: string | null
+  posted_docs: number
+  error_docs: number
+}
+
+// ── GRN detail dialog ─────────────────────────────────────────────────────────
+
+function GRNDetailDialog({ doc, onClose }: { doc: GRNDoc | null; onClose: () => void }) {
+  if (!doc) return null
+
+  const section = (title: string, data: unknown) => {
+    if (!data) return null
+    let text: string
+    try { text = JSON.stringify(data, null, 2) } catch { text = String(data) }
+    return (
+      <Box sx={{ mx: 3, mb: 2 }}>
+        <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+          textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
+          {title}
+        </Typography>
+        <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
+          p: 1.5, maxHeight: 220, overflow: 'auto' }}>
+          <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap', color: '#1e293b', wordBreak: 'break-word', lineHeight: 1.6 }}>
+            {text}
+          </Typography>
+        </Box>
+      </Box>
+    )
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth
+      slotProps={{ paper: { sx: { borderRadius: '8px', overflow: 'hidden' } } }}>
+      <Box sx={{
+        bgcolor: doc.status === 'error' ? '#fef2f2' : doc.status === 'posted' ? '#f0fdf4' : '#fff7ed',
+        borderBottom: `2px solid ${doc.status === 'error' ? '#fecaca' : doc.status === 'posted' ? '#bbf7d0' : '#fed7aa'}`,
+        px: 3, py: 2,
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+          <AdjStatusChip status={doc.status} />
+          <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af', fontFamily: 'monospace' }}>
+            {fmt(doc.created_at)}
+          </Typography>
+        </Box>
+        <Typography sx={{ fontWeight: 700, fontSize: '1rem', color: '#111827', mt: 0.5 }}>
+          GRN Document
+        </Typography>
+        <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
+          Note: {doc.note || '—'} &nbsp;·&nbsp;
+          Store: {doc.store_name || doc.store_code || '—'} &nbsp;·&nbsp;
+          {doc.item_count} items &nbsp;·&nbsp; {doc.posted_count} posted &nbsp;·&nbsp; {doc.error_count} errors
+        </Typography>
+      </Box>
+
+      <DialogContent sx={{ p: 0, maxHeight: '76vh', overflowY: 'auto' }}>
+        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+          <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Summary</Typography>
+          <InfoRow label="Note"        value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.note || '—'}</Typography>} />
+          <InfoRow label="Voucher SID" value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.vousid || '—'}</Typography>} />
+          <InfoRow label="Store Code"  value={doc.store_code || '—'} />
+          <InfoRow label="Store Name"  value={doc.store_name || '—'} />
+          <InfoRow label="Store SID"   value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.storesid || '—'}</Typography>} />
+          <InfoRow label="SBS SID"     value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.sbssid || '—'}</Typography>} />
+          <InfoRow label="Vendor SID"  value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.vendsid || '—'}</Typography>} />
+          <InfoRow label="Source File" value={doc.source_file || '—'} />
+          {doc.posted_at && <InfoRow label="Posted At" value={fmt(doc.posted_at)} />}
+        </Box>
+
+        {doc.items_data && doc.items_data.length > 0 && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Items</Typography>
+            <Box sx={{ border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                    {['UPC', 'Qty', 'Item SID', 'Status'].map(h => (
+                      <TableCell key={h} sx={{ ...thSx, py: 0.5 }}>{h}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {doc.items_data.map((item, i) => (
+                    <TableRow key={i}>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>{item.upc}</TableCell>
+                      <TableCell sx={tdSx}>{item.qty}</TableCell>
+                      <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280' }}>{item.item_sid || '—'}</TableCell>
+                      <TableCell sx={tdSx}>
+                        {item.ok
+                          ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
+                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                        }
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          </Box>
+        )}
+
+        {doc.error_message && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        {section('1. Create Voucher — Request',      doc.api_create_payload)}
+        {section('1. Create Voucher — Response',     doc.api_create_response)}
+        {section('2. GET Rowversion — Response',     doc.api_get_rowversion_response)}
+        {section('3. Set Vendor — Request',          doc.api_vendor_payload)}
+        {section('3. Set Vendor — Response',         doc.api_vendor_response)}
+        {section('4. Post Items — Request',          doc.api_items_payload)}
+        {section('4. Post Items — Response',         doc.api_items_response)}
+        {section('5. Post Comment — Request',        doc.api_comment_payload)}
+        {section('5. Post Comment — Response',       doc.api_comment_response)}
+        {section('6. GET Rowversion (2) — Response', doc.api_get_rowversion2_response)}
+        {section('7. Finalize — Request',            doc.api_finalize_payload)}
+        {section('7. Finalize — Response',           doc.api_finalize_response)}
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
+        <Button size="small" variant="outlined" onClick={onClose}
+          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── GRN tab ───────────────────────────────────────────────────────────────────
+
+function GRNTab() {
+  const qc = useQueryClient()
+  const [selectedBatch, setSelectedBatch] = useState('')
+  const [status, setStatus]               = useState('')
+  const [detail, setDetail]               = useState<GRNDoc | null>(null)
+  const [page, setPage]                   = useState(0)
+  const pageSize                           = 100
+  const [uploading, setUploading]         = useState(false)
+  const [killing, setKilling]             = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
+  const abortRef                          = useRef<AbortController | null>(null)
+
+  const { data: runStatus } = useQuery<{ running: boolean }>({
+    queryKey: ['grn-status'],
+    queryFn: () => apiClient.get('/api/grn/status').then(r => r.data),
+    refetchInterval: 3_000,
+  })
+  const isRunning = uploading || !!runStatus?.running
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const controller = new AbortController()
+    abortRef.current = controller
+    setUploading(true)
+    setKilling(false)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await apiClient.post('/api/grn/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
+      })
+      const d = res.data
+      if (d.cancelled) {
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+      } else {
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} GRN docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      }
+      qc.invalidateQueries({ queryKey: ['grn-batches'] })
+      qc.invalidateQueries({ queryKey: ['grn-docs'] })
+    } catch (err: unknown) {
+      const isCancelled = (err as { name?: string })?.name === 'CanceledError'
+                       || (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isCancelled) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+        setToast({ severity: 'error', msg })
+      }
+      qc.invalidateQueries({ queryKey: ['grn-batches'] })
+      qc.invalidateQueries({ queryKey: ['grn-docs'] })
+    } finally {
+      abortRef.current = null
+      setUploading(false)
+      setKilling(false)
+    }
+  }
+
+  const handleKill = async () => {
+    setKilling(true)
+    try { await apiClient.post('/api/grn/kill') } catch { /* ignore */ }
+    abortRef.current?.abort()
+  }
+
+  const { data: batches, isFetching: batchFetching } = useQuery<GRNBatch[]>({
+    queryKey: ['grn-batches'],
+    queryFn: () => apiClient.get('/api/grn/batches').then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  useEffect(() => {
+    if (batches && batches.length > 0 && !selectedBatch)
+      setSelectedBatch(batches[0].source_file)
+  }, [batches, selectedBatch])
+
+  const activeBatch = batches?.find(b => b.source_file === selectedBatch)
+
+  const params: Record<string, string | number> = {
+    limit: pageSize, offset: page * pageSize,
+    ...(selectedBatch ? { source_file: selectedBatch } : {}),
+    ...(status        ? { status }                     : {}),
+  }
+
+  const { data, isLoading, isFetching } = useQuery<{ total: number; items: GRNDoc[] }>({
+    queryKey: ['grn-docs', params],
+    queryFn: () => apiClient.get('/api/grn/docs', { params }).then(r => r.data),
+    refetchInterval: isRunning ? 3_000 : 30_000,
+    enabled: !!selectedBatch,
+  })
+
+  const docs       = data?.items ?? []
+  const totalPages = Math.ceil((data?.total ?? 0) / pageSize)
+
+  return (
+    <Box>
+      {/* Batch selector */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <FolderOutlinedIcon sx={{ fontSize: 15, color: '#9ca3af' }} />
+        <Typography sx={{ fontSize: '0.72rem', color: '#374151', fontWeight: 600 }}>Batch:</Typography>
+        <FormControl size="small" sx={{ minWidth: 280 }}>
+          <Select value={selectedBatch} displayEmpty
+            onChange={e => { setSelectedBatch(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}
+            renderValue={v => {
+              if (!v) return <em style={{ color: '#9ca3af' }}>Select a batch…</em>
+              const b = batches?.find(x => x.source_file === v)
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>{v}</span>
+                  {b && <Typography component="span" sx={{ fontSize: '0.65rem', color: '#9ca3af', ml: 0.5 }}>
+                    ({b.doc_count} GRNs · {fmt(b.latest)})
+                  </Typography>}
+                </Box>
+              )
+            }}>
+            {(batches ?? []).map(b => (
+              <MenuItem key={b.source_file} value={b.source_file}>
+                <Box sx={{ width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 500 }}>{b.source_file}</Typography>
+                    <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>{fmt(b.latest)}</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, mt: 0.25 }}>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#15803d' }}>✓ {b.posted_docs} posted</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#b91c1c' }}>✗ {b.error_docs} errors</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#6b7280' }}>{b.doc_count} GRNs · {b.total_items} items</Typography>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {batchFetching && <CircularProgress size={12} />}
+      </Box>
+
+      {/* Pills + toolbar */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <Pill label="GRN docs"     value={activeBatch?.doc_count    ?? 0} color="#f59e0b" />
+        <Pill label="posted docs"  value={activeBatch?.posted_docs  ?? 0} color="#22c55e" />
+        <Pill label="error docs"   value={activeBatch?.error_docs   ?? 0} color="#ef4444" />
+        <Pill label="total items"  value={activeBatch?.total_items  ?? 0} color="#6b7280" />
+        <Pill label="posted items" value={activeBatch?.posted_items ?? 0} color="#22c55e" />
+        {isFetching && <CircularProgress size={13} sx={{ ml: 0.5 }} />}
+        <Box sx={{ flexGrow: 1 }} />
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel sx={{ fontSize: '0.78rem' }}>Status</InputLabel>
+          <Select value={status} label="Status"
+            onChange={e => { setStatus(e.target.value); setPage(0) }}
+            sx={{ fontSize: '0.78rem' }}>
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="posted">Posted</MenuItem>
+            <MenuItem value="partial">Partial</MenuItem>
+            <MenuItem value="error">Error</MenuItem>
+          </Select>
+        </FormControl>
+
+        {/* Manual CSV upload / Kill */}
+        {isRunning ? (
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            <Button size="small" variant="contained" disabled
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#f59e0b', pointerEvents: 'none' }}>
+              <CircularProgress size={12} sx={{ color: 'white', mr: 0.75 }} />
+              Processing…
+            </Button>
+            <Tooltip title="Stop import after current GRN document">
+              <Button size="small" variant="contained" disabled={killing}
+                onClick={handleKill}
+                startIcon={killing
+                  ? <CircularProgress size={12} sx={{ color: 'white' }} />
+                  : <StopCircleOutlinedIcon sx={{ fontSize: 15 }} />}
+                sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                  bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+                {killing ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title="Upload GRN CSV manually">
+            <Button component="label" size="small" variant="contained"
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#f59e0b', '&:hover': { bgcolor: '#d97706' } }}>
+              Upload CSV
+              <input type="file" accept=".csv" hidden onChange={handleUpload} />
+            </Button>
+          </Tooltip>
+        )}
+
+        <Tooltip title="Refresh">
+          <IconButton size="small"
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['grn-docs'] })
+              qc.invalidateQueries({ queryKey: ['grn-batches'] })
+            }}
+            sx={{ borderRadius: '4px', border: '1px solid #e5e7eb' }}>
+            <RefreshIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {/* Table — one row per GRN voucher */}
+      <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+        <TableContainer>
+          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 920 }}>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                <TableCell sx={thSx} width={44}>#</TableCell>
+                <TableCell sx={thSx} width={130}>Note</TableCell>
+                <TableCell sx={thSx} width={90}>Store</TableCell>
+                <TableCell sx={thSx}>Store Name</TableCell>
+                <TableCell sx={thSx} width={160}>Voucher SID</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Items</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Posted</TableCell>
+                <TableCell sx={thSx} width={65} align="center">Errors</TableCell>
+                <TableCell sx={thSx} width={85}>Status</TableCell>
+                <TableCell sx={thSx} width={140}>Created At</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {!selectedBatch ? (
+                <TableRow><TableCell colSpan={10} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  Select a batch above to view records.
+                </TableCell></TableRow>
+              ) : isLoading ? (
+                <TableRow><TableCell colSpan={10} align="center" sx={{ py: 6 }}>
+                  <CircularProgress size={22} />
+                </TableCell></TableRow>
+              ) : docs.length === 0 ? (
+                <TableRow><TableCell colSpan={10} align="center"
+                  sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                  No GRN documents found.
+                </TableCell></TableRow>
+              ) : docs.map((doc, i) => (
+                <TableRow key={doc.id} onClick={() => setDetail(doc)}
+                  sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#fffbeb' }, transition: 'background 0.1s' }}>
+                  <TableCell sx={tdSx}>{page * pageSize + i + 1}</TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.note || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                    {doc.store_code || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.store_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.vousid || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center' }}>{doc.item_count}</TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', color: '#15803d', fontWeight: 600 }}>
+                    {doc.posted_count}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center',
+                    color: doc.error_count > 0 ? '#b91c1c' : '#6b7280',
+                    fontWeight: doc.error_count > 0 ? 600 : 400 }}>
+                    {doc.error_count}
+                  </TableCell>
+                  <TableCell sx={tdSx}><AdjStatusChip status={doc.status} /></TableCell>
+                  <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
+                    {fmt(doc.created_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {(data?.total ?? 0) > pageSize && (
+          <Box sx={{ px: 2, py: 1, borderTop: '1px solid #f3f4f6',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
+              Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, data!.total)} of {data!.total}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button size="small" variant="outlined" disabled={page === 0}
+                onClick={() => setPage(p => p - 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Prev</Button>
+              <Button size="small" variant="outlined" disabled={page >= totalPages - 1}
+                onClick={() => setPage(p => p + 1)}
+                sx={{ height: 26, fontSize: '0.72rem', minWidth: 56 }}>Next</Button>
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      <GRNDetailDialog doc={detail} onClose={() => setDetail(null)} />
+
+      <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast?.severity ?? 'info'} onClose={() => setToast(null)}
+          sx={{ fontSize: '0.8rem' }}>
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
+    </Box>
+  )
+}
+
 // ── Module tab registry ───────────────────────────────────────────────────────
 
 const MODULE_TABS = [
@@ -2020,6 +2502,7 @@ const MODULE_TABS = [
   { label: 'QTY Adjustment',    content: <QtyAdjustmentTab /> },
   { label: 'Price Adjustment',  content: <PriceAdjustmentTab /> },
   { label: 'Transfer Slips',    content: <TransferSlipTab /> },
+  { label: 'GRN',               content: <GRNTab /> },
 ]
 
 // ── Page ──────────────────────────────────────────────────────────────────────

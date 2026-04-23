@@ -142,7 +142,7 @@ app.add_middleware(
 
 from app.api.routes import auth, schedule, process, documents, logs, stream, health
 from app.api.routes import users, settings as settings_routes, sales_export, item_master, qty_adjustment
-from app.api.routes import price_adjustment, network, transfer_slip
+from app.api.routes import price_adjustment, network, transfer_slip, grn
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -159,6 +159,7 @@ app.include_router(qty_adjustment.router)
 app.include_router(price_adjustment.router)
 app.include_router(network.router)
 app.include_router(transfer_slip.router)
+app.include_router(grn.router)
 
 
 @app.get("/")

@@ -250,6 +250,79 @@ async def _poll_price_adjustment(host: str, port: int, user: str, password: str)
     return files_processed, docs_processed
 
 
+async def _poll_grn(host: str, port: int, user: str, password: str) -> tuple[int, int]:
+    """
+    Poll the GRN import path and process every .csv file found.
+    Returns (files_processed_count, docs_processed_count).
+    """
+    import_path = (await get_setting("ftp_grn_import_path", "/")) or "/"
+    processed_path = import_path.rstrip("/") + "/processed"
+
+    try:
+        all_files = list_all_files(host, port, user, password, import_path)
+    except Exception as exc:
+        logger.error(f"[GRN] FTP listing failed for path '{import_path}': {exc}")
+        return 0, 0
+
+    all_files = [
+        f for f in all_files
+        if f.lower().endswith(".csv") and "processed" not in f.lower()
+    ]
+
+    if not all_files:
+        logger.info("[GRN] No .csv files found in GRN import path.")
+        return 0, 0
+
+    files_processed = 0
+    docs_processed = 0
+
+    for filename in all_files:
+        files_processed += 1
+        file_start = time.monotonic()
+        status_str = "failed"
+        summary = ""
+
+        try:
+            file_bytes = download_excel_file(filename, host, port, user, password, import_path)
+        except Exception as exc:
+            logger.error(f"[GRN] Download failed for {filename}: {exc}")
+            continue
+
+        try:
+            from app.services.grn_service import process_grn_csv
+            batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
+            result = await process_grn_csv(file_bytes, source_file=batch_key)
+            docs_processed += result.get("total_docs", 0)
+            summary = (
+                f"GRN {filename}: "
+                f"docs={result.get('total_docs', 0)} "
+                f"posted={result.get('posted_docs', 0)} "
+                f"errors={result.get('error_docs', 0)} "
+                f"items={result.get('total_items', 0)}"
+            )
+            logger.info(summary)
+            status_str = "success"
+        except Exception as exc:
+            summary = f"GRN processing failed for {filename}: {exc}"
+            logger.error(summary)
+
+        duration_ms = round((time.monotonic() - file_start) * 1000, 2)
+        async with get_session() as session:
+            async with session.begin():
+                await write_log(
+                    session, activity_type="grn", status=status_str,
+                    details=summary, duration_ms=duration_ms,
+                    metadata={"filename": filename},
+                )
+
+        try:
+            move_ftp_file_to_processed(filename, import_path, processed_path, host, port, user, password)
+        except Exception as exc:
+            logger.warning(f"[GRN] Could not move {filename} to processed: {exc}")
+
+    return files_processed, docs_processed
+
+
 async def poll_ftp_and_ingest():
     """
     APScheduler job: poll all configured FTP import paths for new files.
@@ -259,6 +332,7 @@ async def poll_ftp_and_ingest():
     • Item Master import path      → .xlsx / .csv → item_master_service
     • Qty Adjustment import path   → .csv          → qty_adjustment_service
     • Price Adjustment import path → .csv          → price_adjustment_service
+    • GRN import path              → .csv          → grn_service
     """
     job_start = time.monotonic()
     logger.info("FTP poll job started.")
@@ -294,11 +368,16 @@ async def poll_ftp_and_ingest():
     new_files    += pa_new
     docs_inserted += pa_docs
 
+    # ── Poll GRN import path ──────────────────────────────────────────────────
+    grn_new, grn_docs = await _poll_grn(host, port, user, password)
+    new_files    += grn_new
+    docs_inserted += grn_docs
+
     # ── Final summary ────────────────────────────────────────────────────────
     total_duration = (time.monotonic() - job_start) * 1000
     summary = (
         f"Processed {new_files} new files — "
-        f"{docs_inserted} Adj docs, {im_processed} Item Master rows processed."
+        f"{docs_inserted} Adj/GRN docs, {im_processed} Item Master rows processed."
     )
     logger.info(f"FTP poll job done. {summary}")
 
