@@ -654,16 +654,35 @@ def build_payload(
         except (ValueError, TypeError):
             inv_item[_key] = None
 
+    # ── Shared SID coercion helper ────────────────────────────────────────────
+    def _coerce_sid(val: Any) -> Optional[int]:
+        """Safely coerce a SID string/number to int without float precision loss.
+        Returns None for None, empty string, or non-numeric values."""
+        if val is None:
+            return None
+        s = str(val).strip()
+        if not s or s.lower() == "none":
+            return None
+        try:
+            return int(s.split(".")[0])
+        except (ValueError, TypeError):
+            return None
+
     # ── invnextend sub-object ─────────────────────────────────────────────────
     extend: dict = {}
     if existing_item:
         ex_ext = (existing_item.get("invnextend") or [{}])[0]
-        if ex_ext.get("sid") is not None:
-            extend["sid"] = ex_ext["sid"]
-        if ex_ext.get("rowversion") is not None:
-            extend["rowversion"] = ex_ext["rowversion"]
-        if existing_item.get("sid") is not None:
-            extend["invnsbsitemsid"] = existing_item["sid"]
+        # Coerce integer fields from the API response — they can come back as ""
+        # which would fail the RetailPro serialiser on the next save.
+        ext_sid = _coerce_sid(ex_ext.get("sid"))
+        if ext_sid is not None:
+            extend["sid"] = ext_sid
+        ext_rv = _coerce_sid(ex_ext.get("rowversion"))
+        if ext_rv is not None:
+            extend["rowversion"] = ext_rv
+        ext_parent = _coerce_sid(existing_item.get("sid"))
+        if ext_parent is not None:
+            extend["invnsbsitemsid"] = ext_parent
 
     for col, json_key in INVNEXTEND_MAP.items():
         if col in row and row[col] is not None and str(row[col]).strip() != "":
@@ -674,17 +693,6 @@ def build_payload(
     # ── PrimaryItemDefinition ─────────────────────────────────────────────────
     # Key order: sid → dcssid → vendsid → description1 → description2 → attribute → itemsize
     # dcssid and vendsid are always included (can be null, same as sid).
-    def _coerce_sid(val: Any) -> Optional[int]:
-        """Safely coerce a SID string/number to int without float precision loss."""
-        if val is None:
-            return None
-        s = str(val).strip()
-        if not s or s.lower() == "none":
-            return None
-        try:
-            return int(s.split(".")[0])
-        except (ValueError, TypeError):
-            return None
 
     primary_def: dict = {
         "sid":    _coerce_sid(existing_item.get("sid")) if existing_item else None,
