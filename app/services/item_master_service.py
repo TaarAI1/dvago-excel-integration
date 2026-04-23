@@ -1069,6 +1069,103 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     }
 
 
+# ── Payload field diagnosis ──────────────────────────────────────────────────────
+
+async def diagnose_bad_field(payload: dict) -> dict:
+    """
+    Binary-search through every field of InventoryItems[0] (and invnextend[0])
+    to find the exact field that causes the RetailPro serialiser error
+    "'' is not a valid integer value".
+
+    Returns a dict like:
+        {"found": True,  "section": "InventoryItems", "field": "itemsize", "value": "14'S"}
+        {"found": False, "message": "..."}
+    """
+    from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
+    from app.db.settings_store import get_setting
+
+    base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
+    await sit_session(base_url, auth_session)
+
+    rp_headers = {
+        "Auth-Session": auth_session,
+        "accept": "application/json, version=2",
+        "Content-Type": "application/json",
+    }
+
+    def _is_int_error(resp_json: dict) -> bool:
+        errors = resp_json.get("errors") or []
+        return any(
+            "is not a valid integer" in (e.get("errormsg") or "").lower()
+            for e in errors
+        )
+
+    async def _send(test_inv_item: dict, test_extend: dict) -> bool:
+        """Return True if this field combination triggers the integer error."""
+        test_payload = {
+            **payload,
+            "InventoryItems": [{**test_inv_item, "invnextend": [test_extend]}],
+        }
+        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
+            resp = await http.post(
+                f"{base_url}/api/backoffice/inventory",
+                params={"action": "InventorySaveItems"},
+                json={"data": [test_payload]},
+                headers=rp_headers,
+            )
+        return _is_int_error(resp.json())
+
+    try:
+        orig_inv   = dict(payload.get("InventoryItems", [{}])[0])
+        orig_ext   = dict((orig_inv.pop("invnextend", [{}]) or [{}])[0])
+
+        # ── Reproduce the error with the full payload first ──────────────────
+        if not await _send(orig_inv, orig_ext):
+            return {"found": False, "message": "Error not reproducible — payload succeeds or returns a different error."}
+
+        # ── Binary search on InventoryItems fields ───────────────────────────
+        async def _bisect(pairs: list, section: str, base_inv: dict, base_ext: dict):
+            if len(pairs) == 1:
+                return {"found": True, "section": section, "field": pairs[0][0], "value": pairs[0][1]}
+            mid   = len(pairs) // 2
+            left  = pairs[:mid]
+            right = pairs[mid:]
+            for half in (left, right):
+                test_inv = {**base_inv, **dict(half)} if section == "InventoryItems" else base_inv
+                test_ext = {**base_ext, **dict(half)} if section == "invnextend"     else base_ext
+                if await _send(test_inv, test_ext):
+                    return await _bisect(half, section, base_inv, base_ext)
+            # Both halves are clean individually — interaction between them.
+            # Fall back to linear scan to find the first offending field.
+            for k, v in pairs:
+                test_inv = {**base_inv, k: v} if section == "InventoryItems" else base_inv
+                test_ext = {**base_ext, k: v} if section == "invnextend"     else base_ext
+                if await _send(test_inv, test_ext):
+                    return {"found": True, "section": section, "field": k, "value": v}
+            return {"found": False, "message": f"Could not isolate within {section} fields: {[k for k,_ in pairs]}"}
+
+        # Start with a minimal baseline for InventoryItems: keep only sid
+        base_inv = {"sid": orig_inv.get("sid")}
+        inv_pairs = [(k, v) for k, v in orig_inv.items() if k != "sid"]
+
+        result = await _bisect(inv_pairs, "InventoryItems", base_inv, orig_ext)
+        if result.get("found"):
+            return result
+
+        # ── Binary search on invnextend fields ───────────────────────────────
+        if orig_ext:
+            ext_pairs = list(orig_ext.items())
+            result = await _bisect(ext_pairs, "invnextend", orig_inv, {})
+            if result.get("found"):
+                return result
+
+        return {"found": False, "message": "Error present but could not be attributed to a single field."}
+
+    finally:
+        await stand_session(base_url, auth_session)
+
+
 # ── Batch entry points ───────────────────────────────────────────────────────────
 
 async def process_excel_batch(file_bytes: bytes, source_file: str = "item_master_import.xlsx") -> dict:

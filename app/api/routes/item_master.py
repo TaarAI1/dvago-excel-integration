@@ -10,6 +10,7 @@ POST /api/item-master/kill       – cancel the running import after the current
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from typing import Any
 
 from app.core.security import get_current_user
 
@@ -40,6 +41,38 @@ async def kill_import(_: str = Depends(get_current_user)):
         return {"cancelled": False, "message": "No import is currently running."}
     request_cancel_import()
     return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current row completes."}
+
+
+@router.post("/debug-payload")
+async def debug_payload(
+    body: dict[str, Any],
+    _: str = Depends(get_current_user),
+):
+    """
+    Debug endpoint: given a RetailPro InventorySaveItems payload object,
+    binary-searches through every field of InventoryItems[0] and invnextend[0]
+    to find the exact field causing the 'is not a valid integer' serialiser error.
+
+    Request body: the single payload object (NOT wrapped in {"data": [...]}).
+    Example:
+        {
+            "OriginApplication": "RProPrismWeb",
+            "PrimaryItemDefinition": {...},
+            "InventoryItems": [{...}],
+            ...
+        }
+
+    Response:
+        {"found": true,  "section": "InventoryItems", "field": "itemsize", "value": "14'S"}
+        {"found": false, "message": "Error not reproducible — ..."}
+    """
+    from app.services.item_master_service import diagnose_bad_field
+    try:
+        result = await diagnose_bad_field(body)
+    except Exception as exc:
+        logger.exception("debug-payload failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+    return result
 
 
 @router.post("/preview")
