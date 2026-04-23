@@ -577,6 +577,11 @@ def _to_json(v: Any) -> Any:
                 return str(num)
             except (ValueError, OverflowError):
                 pass
+        # Strip single quotes: RetailPro's Delphi-based server uses ' as its
+        # native string delimiter, so a literal ' inside a JSON string value
+        # confuses its tokeniser and causes adjacent integer fields to be read
+        # as '' → "'' is not a valid integer value" serialiser error.
+        return stripped.replace("'", "")
     return v
 
 
