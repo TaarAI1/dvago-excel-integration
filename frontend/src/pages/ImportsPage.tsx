@@ -1174,19 +1174,39 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
   if (!doc) return null
 
   const section = (title: string, data: unknown, color = '#1e293b') => {
-    if (!data) return null
+    const hasData = data !== null && data !== undefined
     let text: string
-    try { text = JSON.stringify(data, null, 2) } catch { text = String(data) }
+    if (hasData) {
+      try { text = JSON.stringify(data, null, 2) } catch { text = String(data) }
+    } else {
+      text = '— No response recorded (step was not reached) —'
+    }
     return (
       <Box sx={{ mx: 3, mb: 2 }}>
-        <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
-          textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
-          {title}
-        </Typography>
-        <Box sx={{ bgcolor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
-          p: 1.5, maxHeight: 220, overflow: 'auto' }}>
-          <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap', color, wordBreak: 'break-word', lineHeight: 1.6 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+          <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+            textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {title}
+          </Typography>
+          {!hasData && (
+            <Typography sx={{ fontSize: '0.62rem', color: '#9ca3af',
+              bgcolor: '#f3f4f6', border: '1px solid #e5e7eb',
+              borderRadius: '4px', px: 0.75, py: 0.1 }}>
+              not reached
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{
+          bgcolor: hasData ? '#f8fafc' : '#f9fafb',
+          border: `1px solid ${hasData ? '#e2e8f0' : '#e5e7eb'}`,
+          borderRadius: '6px', p: 1.5, maxHeight: 260, overflow: 'auto',
+        }}>
+          <Typography sx={{
+            fontSize: '0.7rem', fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6,
+            color: hasData ? color : '#9ca3af',
+            fontStyle: hasData ? 'normal' : 'italic',
+          }}>
             {text}
           </Typography>
         </Box>
@@ -1278,13 +1298,19 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
           </Box>
         )}
 
-        {section('1. Create Adjustment — Request', doc.api_create_payload)}
-        {section('1. Create Adjustment — Response', doc.api_create_response)}
-        {section('2. Post Items — Request', doc.api_items_payload)}
-        {section('2. Post Items — Response', doc.api_items_response)}
-        {section('3. GET Rowversion — Response', doc.api_get_response)}
-        {section('4. Finalize — Request', doc.api_finalize_payload)}
-        {section('4. Finalize — Response', doc.api_finalize_response)}
+        {/* API trace — all 4 steps always shown; "not reached" badge marks where it stopped */}
+        <Box sx={{ mx: 3, mb: 1.5, mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: '#9ca3af' }}>API Trace</Typography>
+          <Box sx={{ flex: 1, height: '1px', bgcolor: '#e5e7eb' }} />
+        </Box>
+        {section('Step 1 — Create Adjustment · Request',  doc.api_create_payload)}
+        {section('Step 1 — Create Adjustment · Response', doc.api_create_response)}
+        {section('Step 2 — Post Items · Request',         doc.api_items_payload)}
+        {section('Step 2 — Post Items · Response',        doc.api_items_response)}
+        {section('Step 3 — GET Rowversion · Response',    doc.api_get_response)}
+        {section('Step 4 — Finalize · Request',           doc.api_finalize_payload)}
+        {section('Step 4 — Finalize · Response',          doc.api_finalize_response)}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>

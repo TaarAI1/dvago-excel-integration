@@ -247,8 +247,13 @@ async def _get_adjustment_rowversion(
     except Exception:
         resp_json = {"raw": resp.text}
 
-    data = resp_json.get("data") or [] if isinstance(resp_json, dict) else []
-    rowversion = data[0].get("rowversion") if data else None
+    data = resp_json.get("data") if isinstance(resp_json, dict) else None
+    if not isinstance(data, list):
+        data = []
+
+    # Non-empty data array means the record was found; rowversion may be int or str.
+    raw_rv = data[0].get("rowversion") if data else None
+    rowversion = int(raw_rv) if raw_rv is not None else None
     return rowversion, resp_json
 
 
