@@ -198,8 +198,6 @@ async def _create_price_adjustment_doc(
     return adj_sid, payload, resp_json
 
 
-_ITEM_CHUNK = 25  # items per adjitem POST call to avoid ReadTimeout on large batches
-
 async def _post_price_adj_items(
     http: httpx.AsyncClient,
     base_url: str,
@@ -207,42 +205,8 @@ async def _post_price_adj_items(
     adj_sid: str,
     items: list[dict],
 ) -> tuple[dict, dict]:
-    """POST /api/backoffice/adjustment/{adj_sid}/adjitem in chunks of _ITEM_CHUNK."""
-    valid_items = [it for it in items if it.get("item_sid")]
-    all_data: list[dict] = []
-    last_resp_json: dict = {}
-
-    for chunk_start in range(0, len(valid_items), _ITEM_CHUNK):
-        chunk = valid_items[chunk_start: chunk_start + _ITEM_CHUNK]
-        payload = {
-            "data": [
-                {
-                    "originapplication": "RProPrismWeb",
-                    "adjsid": adj_sid,
-                    "itemsid": item["item_sid"],
-                    "itempos": 1,
-                    "adjvalue": item["adj_value"],
-                }
-                for item in chunk
-            ]
-        }
-        resp = await http.post(
-            f"{base_url}/api/backoffice/adjustment/{adj_sid}/adjitem",
-            json=payload,
-            headers=_rp_headers(auth_session),
-        )
-        try:
-            resp_json = resp.json()
-        except Exception:
-            resp_json = {"raw": resp.text}
-
-        # Accumulate data across chunks; keep last response for the trace.
-        if isinstance(resp_json, dict) and isinstance(resp_json.get("data"), list):
-            all_data.extend(resp_json["data"])
-        last_resp_json = resp_json
-
-    # Return a combined payload + merged response so the API trace remains useful.
-    combined_payload = {
+    """POST /api/backoffice/adjustment/{adj_sid}/adjitem with price adjvalue."""
+    payload = {
         "data": [
             {
                 "originapplication": "RProPrismWeb",
@@ -251,13 +215,20 @@ async def _post_price_adj_items(
                 "itempos": 1,
                 "adjvalue": item["adj_value"],
             }
-            for item in valid_items
+            for item in items
+            if item.get("item_sid")
         ]
     }
-    combined_resp = dict(last_resp_json)
-    combined_resp["data"] = all_data
-    combined_resp["_chunks"] = max(1, (len(valid_items) + _ITEM_CHUNK - 1) // _ITEM_CHUNK)
-    return combined_payload, combined_resp
+    resp = await http.post(
+        f"{base_url}/api/backoffice/adjustment/{adj_sid}/adjitem",
+        json=payload,
+        headers=_rp_headers(auth_session),
+    )
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"raw": resp.text}
+    return payload, resp_json
 
 
 async def _get_adjustment_rowversion(
