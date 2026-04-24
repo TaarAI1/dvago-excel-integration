@@ -381,6 +381,7 @@ async def _process_store_batch(
             "error_message": None,
             "items_data": [],
         }
+        items_detail: list[dict] = []  # kept in outer scope for crash-recovery in except
 
         try:
             # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
@@ -418,21 +419,29 @@ async def _process_store_batch(
 
             doc_data["adj_sid"] = adj_sid
 
-            # Step 2: Resolve item SIDs and parse adjvalue (price)
+            # Step 2: Resolve item SIDs from Oracle — catch per-item so one
+            # bad UPC / transient error does not abort the entire batch.
             items_for_api: list[dict] = []
-            items_detail: list[dict] = []
+            items_detail.clear()  # reset (initialised before try block)
 
             for row in batch_rows:
                 upc = row.get("SCANUPC", "").strip()
                 adj_value = _parse_adjvalue(row.get("ADJVALUE", "0") or "0")
 
-                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+                try:
+                    item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+                    item_err = None if item_sid else "Item SID not found in Oracle"
+                except Exception as oracle_exc:
+                    item_sid = None
+                    item_err = f"Oracle error: {oracle_exc}"
+                    logger.warning("[PriceAdj] Oracle SID lookup failed upc=%s: %s", upc, oracle_exc)
+
                 item_detail = {
                     "upc": upc,
                     "adj_value": adj_value,
                     "item_sid": item_sid,
                     "ok": False,
-                    "error": None if item_sid else "Item SID not found in Oracle",
+                    "error": item_err,
                 }
                 items_detail.append(item_detail)
 
@@ -446,7 +455,12 @@ async def _process_store_batch(
             doc_data["items_data"] = items_detail
 
             if not items_for_api:
-                doc_data["error_message"] = "No item SIDs resolved — all UPCs missing from Oracle"
+                oracle_errors = [it["error"] for it in items_detail if it.get("error")]
+                first_err = oracle_errors[0] if oracle_errors else "unknown"
+                doc_data["error_message"] = (
+                    f"[Step 2 failed] No item SIDs resolved for any of the {len(batch_rows)} UPCs. "
+                    f"First error: {first_err}"
+                )
                 doc_data["error_count"] = len(batch_rows)
                 await _persist_price_adj_doc(doc_data)
                 adj_docs.append(doc_data)
@@ -506,8 +520,12 @@ async def _process_store_batch(
 
         except Exception as exc:
             logger.exception("Error processing price adj store=%s batch_start=%d", store_code, batch_start)
-            doc_data["error_message"] = str(exc)
+            doc_data["error_message"] = f"[Unhandled exception] {exc}"
             doc_data["error_count"] = len(batch_rows)
+            # Preserve whatever items_detail was built before the crash so the
+            # dialog can show which UPCs were reached and which weren't.
+            if "items_data" not in doc_data and items_detail:
+                doc_data["items_data"] = items_detail
 
         try:
             await _persist_price_adj_doc(doc_data)
