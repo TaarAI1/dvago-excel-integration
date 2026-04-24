@@ -395,10 +395,21 @@ async def _process_store_batch(
             _resp_data = create_resp.get("data") if isinstance(create_resp, dict) else None
             _data_ok = isinstance(_resp_data, list) and len(_resp_data) > 0
             if not _data_ok or adj_sid is None:
+                # Pull the API's own error detail so the user can see the exact rejection reason.
+                _api_errors = None
+                if isinstance(create_resp, dict):
+                    _api_errors = create_resp.get("errors") or create_resp.get("error") or create_resp.get("message")
+                if _data_ok and adj_sid is None:
+                    _reason = f"data array non-empty but 'sid' missing in data[0]"
+                elif _api_errors:
+                    _reason = f"RetailPro error: {_api_errors}"
+                else:
+                    _reason = f"Create adjustment returned empty data array (no record was created)"
                 doc_data["error_message"] = (
-                    f"No sid found in create response data: {create_resp}"
-                    if _data_ok
-                    else f"Empty or missing data array in create response: {create_resp}"
+                    f"[Step 1 failed] {_reason}. "
+                    f"store_sid={doc_data.get('store_sid')} sbs_sid={doc_data.get('sbs_sid')} "
+                    f"price_lvl_sid={doc_data.get('price_lvl_sid')}. "
+                    f"Full response → see Step 1 Create Adjustment Response in API trace."
                 )
                 doc_data["error_count"] = len(batch_rows)
                 await _persist_price_adj_doc(doc_data)
@@ -455,7 +466,20 @@ async def _process_store_batch(
             doc_data["api_get_response"] = get_resp
 
             if rowversion is None:
-                doc_data["error_message"] = f"Could not get rowversion: {get_resp}"
+                _get_errors = None
+                if isinstance(get_resp, dict):
+                    _get_errors = get_resp.get("errors") or get_resp.get("error") or get_resp.get("message")
+                _get_data = get_resp.get("data") if isinstance(get_resp, dict) else None
+                if isinstance(_get_data, list) and len(_get_data) == 0:
+                    _rv_reason = f"GET adjustment returned empty data (adj_sid={adj_sid} not found)"
+                elif _get_errors:
+                    _rv_reason = f"RetailPro error: {_get_errors}"
+                else:
+                    _rv_reason = f"'rowversion' field missing or null in GET response"
+                doc_data["error_message"] = (
+                    f"[Step 3 failed] {_rv_reason}. "
+                    f"Full response → see Step 3 GET Rowversion Response in API trace."
+                )
                 doc_data["error_count"] = len(batch_rows)
                 await _persist_price_adj_doc(doc_data)
                 adj_docs.append(doc_data)
