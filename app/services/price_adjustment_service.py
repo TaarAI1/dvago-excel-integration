@@ -187,8 +187,14 @@ async def _create_price_adjustment_doc(
     except Exception:
         resp_json = {"raw": resp.text}
 
-    data = resp_json.get("data") or [] if isinstance(resp_json, dict) else []
-    adj_sid = data[0].get("sid") if data else None
+    data = resp_json.get("data") if isinstance(resp_json, dict) else None
+    if not isinstance(data, list):
+        data = []
+
+    # Non-empty data array means the create call succeeded.
+    # Extract adj_sid from data[0]["sid"]; convert to str to handle numeric SIDs.
+    raw_sid = data[0].get("sid") if data else None
+    adj_sid = str(raw_sid) if raw_sid is not None else None
     return adj_sid, payload, resp_json
 
 
@@ -380,8 +386,15 @@ async def _process_store_batch(
             doc_data["api_create_payload"] = create_payload
             doc_data["api_create_response"] = create_resp
 
-            if not adj_sid:
-                doc_data["error_message"] = f"No adj_sid in create response: {create_resp}"
+            # A non-empty data array in the create response means success.
+            _resp_data = create_resp.get("data") if isinstance(create_resp, dict) else None
+            _data_ok = isinstance(_resp_data, list) and len(_resp_data) > 0
+            if not _data_ok or adj_sid is None:
+                doc_data["error_message"] = (
+                    f"No sid found in create response data: {create_resp}"
+                    if _data_ok
+                    else f"Empty or missing data array in create response: {create_resp}"
+                )
                 doc_data["error_count"] = len(batch_rows)
                 await _persist_price_adj_doc(doc_data)
                 adj_docs.append(doc_data)

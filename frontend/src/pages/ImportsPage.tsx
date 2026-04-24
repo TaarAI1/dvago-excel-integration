@@ -1364,7 +1364,7 @@ function PriceAdjustmentTab() {
   const { data: batches, isFetching: batchFetching } = useQuery<PriceAdjBatch[]>({
     queryKey: ['pa-batches'],
     queryFn: () => apiClient.get('/api/price-adjustment/batches').then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: isRunning ? 3_000 : 30_000,
   })
 
   useEffect(() => {
