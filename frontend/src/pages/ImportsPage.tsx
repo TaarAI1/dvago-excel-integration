@@ -1291,7 +1291,8 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
                 textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
             </Box>
-            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px',
+              p: 1.5, maxHeight: 180, overflowY: 'auto' }}>
               <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
                 color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
             </Box>

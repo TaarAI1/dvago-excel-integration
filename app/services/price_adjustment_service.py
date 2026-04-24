@@ -520,11 +520,16 @@ async def _process_store_batch(
 
         except Exception as exc:
             logger.exception("Error processing price adj store=%s batch_start=%d", store_code, batch_start)
-            doc_data["error_message"] = f"[Unhandled exception] {exc}"
+            exc_type = type(exc).__name__
+            exc_msg  = str(exc) or "(no message)"
+            doc_data["error_message"] = (
+                f"[Unhandled exception] {exc_type}: {exc_msg}\n"
+                f"store={store_code} adj_sid={doc_data.get('adj_sid')} batch_start={batch_start}"
+            )
             doc_data["error_count"] = len(batch_rows)
             # Preserve whatever items_detail was built before the crash so the
             # dialog can show which UPCs were reached and which weren't.
-            if "items_data" not in doc_data and items_detail:
+            if not doc_data.get("items_data") and items_detail:
                 doc_data["items_data"] = items_detail
 
         try:
