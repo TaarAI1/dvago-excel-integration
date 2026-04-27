@@ -449,41 +449,41 @@ async def _process_note_batch(
         items_for_api: list[dict] = []
         items_detail: list[dict] = []
 
-            for row in rows:
-                upc = row.get("SCANUPC", "").strip()
-                try:
-                    csv_delta = int(float(row.get("ADJQUANTITY", "0") or "0"))
-                except (ValueError, TypeError):
-                    csv_delta = 0
+        for row in rows:
+            upc = row.get("SCANUPC", "").strip()
+            try:
+                csv_delta = int(float(row.get("ADJQUANTITY", "0") or "0"))
+            except (ValueError, TypeError):
+                csv_delta = 0
 
-                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+            item_sid = await _get_item_sid(upc, item_sid_cache, oc)
 
-                # Calculate target qty: current_qty (from Oracle) + csv_delta
-                if item_sid and sbs_sid and store_sid:
-                    current_qty = await _get_item_qty(
-                        sbs_sid, store_sid, item_sid, item_qty_cache, oc
-                    )
-                else:
-                    current_qty = 0
-                adj_value = current_qty + csv_delta
+            # Calculate target qty: current_qty (from Oracle) + csv_delta
+            if item_sid and sbs_sid and store_sid:
+                current_qty = await _get_item_qty(
+                    sbs_sid, store_sid, item_sid, item_qty_cache, oc
+                )
+            else:
+                current_qty = 0
+            adj_value = current_qty + csv_delta
 
-                item_detail = {
-                    "upc": upc,
-                    "csv_delta": csv_delta,
-                    "current_qty": current_qty,
-                    "adj_value": adj_value,
+            item_detail = {
+                "upc": upc,
+                "csv_delta": csv_delta,
+                "current_qty": current_qty,
+                "adj_value": adj_value,
+                "item_sid": item_sid,
+                "ok": False,
+                "error": None if item_sid else "Item SID not found in Oracle",
+            }
+            items_detail.append(item_detail)
+
+            if item_sid:
+                items_for_api.append({
                     "item_sid": item_sid,
-                    "ok": False,
-                    "error": None if item_sid else "Item SID not found in Oracle",
-                }
-                items_detail.append(item_detail)
-
-                if item_sid:
-                    items_for_api.append({
-                        "item_sid": item_sid,
-                        "adj_value": adj_value,
-                        "upc": upc,
-                    })
+                    "adj_value": adj_value,
+                    "upc": upc,
+                })
 
         doc_data["items_data"] = items_detail
 
