@@ -676,6 +676,20 @@ async def process_grn_csv(
         note = row.get("NOTE", "").strip()
         note_groups.setdefault(note, []).append(row)
 
+    # Load all notes that were successfully processed in any previous batch so we
+    # can reject duplicates before making any API calls.
+    from app.db.postgres import get_session
+    from app.models.grn_doc import GRNDoc
+    from sqlalchemy import select
+    async with get_session() as _sess:
+        _result = await _sess.execute(
+            select(GRNDoc.note).where(
+                GRNDoc.note.in_(list(note_groups.keys())),
+                GRNDoc.status.in_(["posted", "partial"]),
+            )
+        )
+        already_processed_notes: set[str] = {r[0] for r in _result.all() if r[0]}
+
     store_cache:  dict = {}
     vendor_cache: dict = {}
     item_cache:   dict = {}
@@ -692,6 +706,34 @@ async def process_grn_csv(
                     cancelled = True
                     logger.info("[GRN] Import %s cancelled after note=%s", import_id, note)
                     break
+
+                # Reject notes that were successfully processed in a previous batch.
+                if note in already_processed_notes:
+                    store_code = note_rows[0].get("STORE_CODE", "").strip()
+                    store_name = note_rows[0].get("STORE_NAME", "").strip()
+                    dup_doc = {
+                        "source_file": source_file,
+                        "note": note,
+                        "store_code": store_code,
+                        "store_name": store_name,
+                        "storesid": None,
+                        "sbssid": None,
+                        "vendsid": None,
+                        "vousid": None,
+                        "item_count": len(note_rows),
+                        "posted_count": 0,
+                        "error_count": len(note_rows),
+                        "status": "error",
+                        "error_message": (
+                            f"Note '{note}' has already been processed in a previous batch. "
+                            f"Skipping to avoid duplicate GRN."
+                        ),
+                        "items_data": [],
+                    }
+                    logger.warning("[GRN] Skipping note='%s' — already processed in a previous batch.", note)
+                    await _persist_grn_doc(dup_doc)
+                    all_docs.append(dup_doc)
+                    continue
 
                 # Validate: every row in a note-group must share the same Vendor Code.
                 vendor_codes = {str(r.get("VENDOR_CODE", "")).strip() for r in note_rows}
