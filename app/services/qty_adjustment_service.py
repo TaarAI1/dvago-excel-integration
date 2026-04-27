@@ -682,7 +682,8 @@ async def process_qty_adjustment_csv(
     cancelled = False
     all_docs: list[dict] = []
     try:
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
+        _timeout = httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0)
+        async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
                 if _is_import_cancelled(import_id):
                     logger.info(
