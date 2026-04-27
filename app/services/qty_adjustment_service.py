@@ -128,6 +128,30 @@ async def _get_adj_reason_sid(oc: dict) -> Optional[str]:
     )
 
 
+async def _get_item_qty(
+    sbs_sid: str,
+    store_sid: str,
+    item_sid: str,
+    cache: dict,
+    oc: dict,
+) -> int:
+    """Return current qty for an item from rps.invn_sbs_item_qty. Returns 0 if not found."""
+    key = f"{sbs_sid}:{store_sid}:{item_sid}"
+    if key not in cache:
+        raw = await _oracle_scalar(
+            f"SELECT qty FROM rps.invn_sbs_item_qty "
+            f"WHERE sbs_sid = '{sbs_sid}' "
+            f"AND store_Sid = '{store_sid}' "
+            f"AND invn_sbs_item_sid = '{item_sid}'",
+            oc,
+        )
+        try:
+            cache[key] = int(float(raw)) if raw is not None else 0
+        except (ValueError, TypeError):
+            cache[key] = 0
+    return cache[key]
+
+
 # ── RetailPro API calls ───────────────────────────────────────────────────────
 
 def _rp_headers(auth_session: str) -> dict:
@@ -356,6 +380,7 @@ async def _process_note_batch(
     store_sid_cache: dict,
     sbs_sid_cache: dict,
     item_sid_cache: dict,
+    item_qty_cache: dict,
     adj_reason_sid: Optional[str] = None,
 ) -> dict:
     """Process all rows for a single NOTE as one adjustment document."""
@@ -424,29 +449,41 @@ async def _process_note_batch(
         items_for_api: list[dict] = []
         items_detail: list[dict] = []
 
-        for row in rows:
-            upc = row.get("SCANUPC", "").strip()
-            try:
-                adj_value = int(float(row.get("ADJQUANTITY", "0") or "0"))
-            except (ValueError, TypeError):
-                adj_value = 0
+            for row in rows:
+                upc = row.get("SCANUPC", "").strip()
+                try:
+                    csv_delta = int(float(row.get("ADJQUANTITY", "0") or "0"))
+                except (ValueError, TypeError):
+                    csv_delta = 0
 
-            item_sid = await _get_item_sid(upc, item_sid_cache, oc)
-            item_detail = {
-                "upc": upc,
-                "adj_value": adj_value,
-                "item_sid": item_sid,
-                "ok": False,
-                "error": None if item_sid else "Item SID not found in Oracle",
-            }
-            items_detail.append(item_detail)
+                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
 
-            if item_sid:
-                items_for_api.append({
-                    "item_sid": item_sid,
-                    "adj_value": adj_value,
+                # Calculate target qty: current_qty (from Oracle) + csv_delta
+                if item_sid and sbs_sid and store_sid:
+                    current_qty = await _get_item_qty(
+                        sbs_sid, store_sid, item_sid, item_qty_cache, oc
+                    )
+                else:
+                    current_qty = 0
+                adj_value = current_qty + csv_delta
+
+                item_detail = {
                     "upc": upc,
-                })
+                    "csv_delta": csv_delta,
+                    "current_qty": current_qty,
+                    "adj_value": adj_value,
+                    "item_sid": item_sid,
+                    "ok": False,
+                    "error": None if item_sid else "Item SID not found in Oracle",
+                }
+                items_detail.append(item_detail)
+
+                if item_sid:
+                    items_for_api.append({
+                        "item_sid": item_sid,
+                        "adj_value": adj_value,
+                        "upc": upc,
+                    })
 
         doc_data["items_data"] = items_detail
 
@@ -465,14 +502,14 @@ async def _process_note_batch(
 
         _items_ok = items_status < 400
         if _items_ok and isinstance(items_resp, dict):
-            _items_errors = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+            _items_errors = items_resp.get("errors") or items_resp.get("error")
             if _items_errors:
                 _items_ok = False
 
         if not _items_ok:
             _items_err_detail = None
             if isinstance(items_resp, dict):
-                _items_err_detail = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+                _items_err_detail = items_resp.get("errors") or items_resp.get("error")
             doc_data["error_message"] = (
                 f"[Step 3 failed] POST adjitems returned HTTP {items_status}. "
                 + (f"RetailPro error: {_items_err_detail}. " if _items_err_detail else "")
@@ -507,14 +544,14 @@ async def _process_note_batch(
 
         _fin_ok = fin_status < 400
         if _fin_ok and isinstance(fin_resp, dict):
-            _fin_errors = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+            _fin_errors = fin_resp.get("errors") or fin_resp.get("error")
             if _fin_errors:
                 _fin_ok = False
 
         if not _fin_ok:
             _fin_err_detail = None
             if isinstance(fin_resp, dict):
-                _fin_err_detail = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+                _fin_err_detail = fin_resp.get("errors") or fin_resp.get("error")
             doc_data["error_message"] = (
                 f"[Step 5 failed] PUT finalize returned HTTP {fin_status}. "
                 + (f"RetailPro error: {_fin_err_detail}. " if _fin_err_detail else "")
@@ -621,6 +658,7 @@ async def process_qty_adjustment_csv(
     store_sid_cache: dict = {}
     sbs_sid_cache: dict = {}
     item_sid_cache: dict = {}
+    item_qty_cache: dict = {}
 
     adj_reason_sid = await _get_adj_reason_sid(oc)
     if not adj_reason_sid:
@@ -649,6 +687,7 @@ async def process_qty_adjustment_csv(
                     store_sid_cache=store_sid_cache,
                     sbs_sid_cache=sbs_sid_cache,
                     item_sid_cache=item_sid_cache,
+                    item_qty_cache=item_qty_cache,
                     adj_reason_sid=adj_reason_sid,
                 )
                 all_docs.append(doc)

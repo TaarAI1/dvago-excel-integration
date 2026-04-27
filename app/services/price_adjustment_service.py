@@ -530,14 +530,14 @@ async def _process_note_batch(
 
         _items_ok = items_status < 400
         if _items_ok and isinstance(items_resp, dict):
-            _items_errors = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+            _items_errors = items_resp.get("errors") or items_resp.get("error")
             if _items_errors:
                 _items_ok = False
 
         if not _items_ok:
             _items_err_detail = None
             if isinstance(items_resp, dict):
-                _items_err_detail = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+                _items_err_detail = items_resp.get("errors") or items_resp.get("error")
             doc_data["error_message"] = (
                 f"[Step 3 failed] POST adjitems returned HTTP {items_status}. "
                 + (f"RetailPro error: {_items_err_detail}. " if _items_err_detail else "")
@@ -585,14 +585,14 @@ async def _process_note_batch(
 
         _fin_ok = fin_status < 400
         if _fin_ok and isinstance(fin_resp, dict):
-            _fin_errors = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+            _fin_errors = fin_resp.get("errors") or fin_resp.get("error")
             if _fin_errors:
                 _fin_ok = False
 
         if not _fin_ok:
             _fin_err_detail = None
             if isinstance(fin_resp, dict):
-                _fin_err_detail = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+                _fin_err_detail = fin_resp.get("errors") or fin_resp.get("error")
             doc_data["error_message"] = (
                 f"[Step 5 failed] PUT finalize returned HTTP {fin_status}. "
                 + (f"RetailPro error: {_fin_err_detail}. " if _fin_err_detail else "")
