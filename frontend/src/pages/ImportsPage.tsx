@@ -656,6 +656,7 @@ interface QtyAdjDoc {
   store_sid: string | null
   sbs_sid: string | null
   adj_sid: string | null
+  note: string | null
   item_count: number
   posted_count: number
   error_count: number
@@ -668,7 +669,17 @@ interface QtyAdjDoc {
   api_get_response: unknown
   api_finalize_payload: unknown
   api_finalize_response: unknown
-  items_data: Array<{ upc: string; adj_value: number; item_sid: string | null; ok: boolean; error: string | null }> | null
+  api_comment_payload: unknown
+  api_comment_response: unknown
+  items_data: Array<{
+    upc: string
+    csv_delta: number | null
+    current_qty: number | null
+    adj_value: number
+    item_sid: string | null
+    ok: boolean
+    error: string | null
+  }> | null
   created_at: string
   posted_at: string | null
 }
@@ -753,11 +764,28 @@ function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: 
       </Box>
 
       <DialogContent sx={{ p: 0, maxHeight: '76vh', overflowY: 'auto' }}>
+
+        {/* ── Error message — shown first so it is immediately visible ── */}
+        {doc.error_message && (
+          <Box sx={{ mx: 3, mt: 2, mb: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error Details</Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
         {/* Summary */}
-        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+        <Box sx={{ px: 3, pt: doc.error_message ? 1 : 2, pb: 1 }}>
           <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
             textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Summary</Typography>
           <InfoRow label="Adj SID"     value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.adj_sid || '—'}</Typography>} />
+          {doc.note && <InfoRow label="Note" value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.note}</Typography>} />}
           <InfoRow label="Store Code"  value={doc.store_code || '—'} />
           <InfoRow label="Store SID"   value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.store_sid || '—'}</Typography>} />
           <InfoRow label="Sbs SID"     value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.sbs_sid || '—'}</Typography>} />
@@ -774,7 +802,7 @@ function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: 
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ bgcolor: '#f9fafb' }}>
-                    {['UPC', 'Adj Value', 'Item SID', 'Status'].map(h => (
+                    {['UPC', 'CSV Delta', 'Current Qty', 'Sent Value', 'Item SID', 'Status'].map(h => (
                       <TableCell key={h} sx={{ ...thSx, py: 0.5 }}>{h}</TableCell>
                     ))}
                   </TableRow>
@@ -783,33 +811,20 @@ function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: 
                   {doc.items_data.map((item, i) => (
                     <TableRow key={i}>
                       <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.72rem' }}>{item.upc}</TableCell>
-                      <TableCell sx={tdSx}>{item.adj_value}</TableCell>
+                      <TableCell sx={tdSx}>{item.csv_delta ?? '—'}</TableCell>
+                      <TableCell sx={tdSx}>{item.current_qty ?? '—'}</TableCell>
+                      <TableCell sx={{ ...tdSx, fontWeight: 600 }}>{item.adj_value}</TableCell>
                       <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem', color: '#6b7280' }}>{item.item_sid || '—'}</TableCell>
                       <TableCell sx={tdSx}>
                         {item.ok
                           ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
-                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', maxWidth: 260 }} />
                         }
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </Box>
-          </Box>
-        )}
-
-        {/* Error */}
-        {doc.error_message && (
-          <Box sx={{ mx: 3, mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
-              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
-              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
-                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
-            </Box>
-            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
-              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
-                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
             </Box>
           </Box>
         )}
@@ -822,6 +837,8 @@ function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: 
         {section('3. GET Rowversion — Response', doc.api_get_response)}
         {section('4. Finalize — Request', doc.api_finalize_payload)}
         {section('4. Finalize — Response', doc.api_finalize_response)}
+        {section('5. Post Comment — Request', doc.api_comment_payload)}
+        {section('5. Post Comment — Response', doc.api_comment_response)}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
@@ -1139,6 +1156,7 @@ interface PriceAdjDoc {
   store_sid: string | null
   sbs_sid: string | null
   adj_sid: string | null
+  note: string | null
   price_lvl_sid: string | null
   item_count: number
   posted_count: number
@@ -1152,6 +1170,8 @@ interface PriceAdjDoc {
   api_get_response: unknown
   api_finalize_payload: unknown
   api_finalize_response: unknown
+  api_comment_payload: unknown
+  api_comment_response: unknown
   items_data: Array<{ upc: string; adj_value: number; item_sid: string | null; ok: boolean; error: string | null }> | null
   created_at: string
   posted_at: string | null
@@ -1239,10 +1259,28 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
       </Box>
 
       <DialogContent sx={{ p: 0, maxHeight: '76vh', overflowY: 'auto' }}>
-        <Box sx={{ px: 3, pt: 2, pb: 1 }}>
+
+        {/* ── Error message — shown first so it is immediately visible ── */}
+        {doc.error_message && (
+          <Box sx={{ mx: 3, mt: 2, mb: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
+                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error Details</Typography>
+            </Box>
+            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px',
+              p: 1.5, maxHeight: 180, overflowY: 'auto' }}>
+              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        <Box sx={{ px: 3, pt: doc.error_message ? 1 : 2, pb: 1 }}>
           <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
             textTransform: 'uppercase', color: '#9ca3af', mb: 1 }}>Summary</Typography>
           <InfoRow label="Adj SID"        value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.adj_sid || '—'}</Typography>} />
+          {doc.note && <InfoRow label="Note" value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{doc.note}</Typography>} />}
           <InfoRow label="Store Code"     value={doc.store_code || '—'} />
           <InfoRow label="Store SID"      value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.store_sid || '—'}</Typography>} />
           <InfoRow label="Sbs SID"        value={<Typography sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#6b7280' }}>{doc.sbs_sid || '—'}</Typography>} />
@@ -1273,7 +1311,7 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
                       <TableCell sx={tdSx}>
                         {item.ok
                           ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
-                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', maxWidth: 260 }} />
                         }
                       </TableCell>
                     </TableRow>
@@ -1284,22 +1322,7 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
           </Box>
         )}
 
-        {doc.error_message && (
-          <Box sx={{ mx: 3, mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
-              <ErrorOutlinedIcon sx={{ fontSize: 14, color: '#b91c1c' }} />
-              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c',
-                textTransform: 'uppercase', letterSpacing: '0.06em' }}>Error</Typography>
-            </Box>
-            <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px',
-              p: 1.5, maxHeight: 180, overflowY: 'auto' }}>
-              <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
-                color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
-            </Box>
-          </Box>
-        )}
-
-        {/* API trace — all 4 steps always shown; "not reached" badge marks where it stopped */}
+        {/* API trace — all steps always shown; "not reached" badge marks where it stopped */}
         <Box sx={{ mx: 3, mb: 1.5, mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
           <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
             textTransform: 'uppercase', color: '#9ca3af' }}>API Trace</Typography>
@@ -1312,6 +1335,8 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
         {section('Step 3 — GET Rowversion · Response',    doc.api_get_response)}
         {section('Step 4 — Finalize · Request',           doc.api_finalize_payload)}
         {section('Step 4 — Finalize · Response',          doc.api_finalize_response)}
+        {section('Step 5 — Post Comment · Request',       doc.api_comment_payload)}
+        {section('Step 5 — Post Comment · Response',      doc.api_comment_response)}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>

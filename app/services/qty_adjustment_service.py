@@ -456,15 +456,30 @@ async def _process_note_batch(
             except (ValueError, TypeError):
                 csv_delta = 0
 
-            item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+            # Resolve item SID — catch per-item so one bad UPC doesn't abort the batch
+            try:
+                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+                item_err = None if item_sid else "Item SID not found in Oracle"
+            except Exception as sid_exc:
+                item_sid = None
+                item_err = f"Oracle SID error: {sid_exc}"
+                logger.warning("[QtyAdj] Oracle SID lookup failed upc=%s: %s", upc, sid_exc)
 
-            # Calculate target qty: current_qty (from Oracle) + csv_delta
+            # Resolve current qty and calculate target value
+            current_qty = 0
             if item_sid and sbs_sid and store_sid:
-                current_qty = await _get_item_qty(
-                    sbs_sid, store_sid, item_sid, item_qty_cache, oc
-                )
-            else:
-                current_qty = 0
+                try:
+                    current_qty = await _get_item_qty(
+                        sbs_sid, store_sid, item_sid, item_qty_cache, oc
+                    )
+                except Exception as qty_exc:
+                    logger.warning(
+                        "[QtyAdj] Oracle qty lookup failed upc=%s item_sid=%s: %s",
+                        upc, item_sid, qty_exc,
+                    )
+                    if not item_err:
+                        item_err = f"Oracle qty error: {qty_exc}"
+
             adj_value = current_qty + csv_delta
 
             item_detail = {
@@ -474,7 +489,7 @@ async def _process_note_batch(
                 "adj_value": adj_value,
                 "item_sid": item_sid,
                 "ok": False,
-                "error": None if item_sid else "Item SID not found in Oracle",
+                "error": item_err,
             }
             items_detail.append(item_detail)
 
