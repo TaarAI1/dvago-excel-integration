@@ -693,6 +693,40 @@ async def process_grn_csv(
                     logger.info("[GRN] Import %s cancelled after note=%s", import_id, note)
                     break
 
+                # Validate: every row in a note-group must share the same Vendor Code.
+                vendor_codes = {str(r.get("VENDOR_CODE", "")).strip() for r in note_rows}
+                vendor_codes.discard("")
+                if len(vendor_codes) > 1:
+                    store_code = note_rows[0].get("STORE_CODE", "").strip()
+                    store_name = note_rows[0].get("STORE_NAME", "").strip()
+                    err_doc = {
+                        "source_file": source_file,
+                        "note": note,
+                        "store_code": store_code,
+                        "store_name": store_name,
+                        "storesid": None,
+                        "sbssid": None,
+                        "vendsid": None,
+                        "vousid": None,
+                        "item_count": len(note_rows),
+                        "posted_count": 0,
+                        "error_count": len(note_rows),
+                        "status": "error",
+                        "error_message": (
+                            f"Multiple vendors in GRN note='{note}': "
+                            f"{', '.join(sorted(vendor_codes))}. "
+                            f"All rows in a note group must share the same Vendor Code."
+                        ),
+                        "items_data": [],
+                    }
+                    logger.warning(
+                        "[GRN] Skipping note='%s' — multiple vendor codes: %s",
+                        note, vendor_codes,
+                    )
+                    await _persist_grn_doc(err_doc)
+                    all_docs.append(err_doc)
+                    continue
+
                 docs = await _process_note_group(
                     note=note,
                     rows=note_rows,
