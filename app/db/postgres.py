@@ -33,6 +33,26 @@ async def connect_db(database_url: str):
         await conn.execute(text(
             "ALTER TABLE sales_export_runs ADD COLUMN IF NOT EXISTS error_message TEXT"
         ))
+        # price_adjustment_docs — new columns
+        await conn.execute(text(
+            "ALTER TABLE price_adjustment_docs ADD COLUMN IF NOT EXISTS note VARCHAR(500)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE price_adjustment_docs ADD COLUMN IF NOT EXISTS api_comment_payload JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE price_adjustment_docs ADD COLUMN IF NOT EXISTS api_comment_response JSONB"
+        ))
+        # qty_adjustment_docs — new columns
+        await conn.execute(text(
+            "ALTER TABLE qty_adjustment_docs ADD COLUMN IF NOT EXISTS note VARCHAR(500)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE qty_adjustment_docs ADD COLUMN IF NOT EXISTS api_comment_payload JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE qty_adjustment_docs ADD COLUMN IF NOT EXISTS api_comment_response JSONB"
+        ))
 
     logger.info("Connected to PostgreSQL and tables ensured.")
 
