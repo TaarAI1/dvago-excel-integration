@@ -145,6 +145,12 @@ async def _get_item_sid(upc: str, cache: dict, oc: dict) -> Optional[str]:
     return cache[key]
 
 
+async def _get_adj_reason_sid(oc: dict) -> Optional[str]:
+    return await _oracle_scalar(
+        "SELECT SID FROM RPS.PREF_REASON WHERE name = 'MANUALLY'", oc
+    )
+
+
 # ── RetailPro API calls ───────────────────────────────────────────────────────
 
 def _rp_headers(auth_session: str) -> dict:
@@ -162,21 +168,23 @@ async def _create_price_adjustment_doc(
     store_sid: str,
     sbs_sid: str,
     price_lvl_sid: str,
+    adj_reason_sid: Optional[str] = None,
 ) -> tuple[Optional[str], dict, dict]:
     """POST /api/backoffice/adjustment with adjtype=1 and pricelvlsid."""
-    payload = {
-        "data": [{
-            "originapplication": "rProPrismWeb",
-            "status": 3,
-            "adjtype": 1,
-            "sbssid": sbs_sid,
-            "creatingdoctype": 8,
-            "origstoresid": store_sid,
-            "reasonname": "Manually",
-            "storesid": store_sid,
-            "pricelvlsid": price_lvl_sid,
-        }]
+    record: dict = {
+        "originapplication": "rProPrismWeb",
+        "status": 3,
+        "adjtype": 1,
+        "sbssid": sbs_sid,
+        "creatingdoctype": 8,
+        "origstoresid": store_sid,
+        "reasonname": "MANUALLY",
+        "storesid": store_sid,
+        "pricelvlsid": price_lvl_sid,
     }
+    if adj_reason_sid:
+        record["adjreasonsid"] = adj_reason_sid
+    payload = {"data": [record]}
     resp = await http.post(
         f"{base_url}/api/backoffice/adjustment",
         json=payload,
@@ -204,8 +212,10 @@ async def _post_price_adj_items(
     auth_session: str,
     adj_sid: str,
     items: list[dict],
-) -> tuple[dict, dict]:
-    """POST /api/backoffice/adjustment/{adj_sid}/adjitem with price adjvalue."""
+) -> tuple[dict, dict, int]:
+    """POST /api/backoffice/adjustment/{adj_sid}/adjitem with price adjvalue.
+    Returns (payload_sent, response_json, http_status_code).
+    """
     payload = {
         "data": [
             {
@@ -228,7 +238,7 @@ async def _post_price_adj_items(
         resp_json = resp.json()
     except Exception:
         resp_json = {"raw": resp.text}
-    return payload, resp_json
+    return payload, resp_json, resp.status_code
 
 
 async def _get_adjustment_rowversion(
@@ -263,10 +273,41 @@ async def _finalize_adjustment(
     auth_session: str,
     adj_sid: str,
     rowversion: int,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, int]:
+    """PUT /api/backoffice/adjustment/{adj_sid} → status 4.
+    Returns (payload_sent, response_json, http_status_code).
+    """
     payload = {"data": [{"rowversion": rowversion, "status": 4}]}
     resp = await http.put(
         f"{base_url}/api/backoffice/adjustment/{adj_sid}",
+        json=payload,
+        headers=_rp_headers(auth_session),
+    )
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"raw": resp.text}
+    return payload, resp_json, resp.status_code
+
+
+async def _post_price_adj_comment(
+    http: httpx.AsyncClient,
+    base_url: str,
+    auth_session: str,
+    adj_sid: str,
+    note: str,
+) -> tuple[dict, dict]:
+    """POST /api/backoffice/adjustment/{adj_sid}/adjcomment with note as comment."""
+    payload = {
+        "data": [{
+            "originapplication": "RProPrismWeb",
+            "adjsid": adj_sid,
+            "comments": note,
+        }]
+    }
+    resp = await http.post(
+        f"{base_url}/api/backoffice/adjustment/{adj_sid}/adjcomment",
+        params={"comments": note},
         json=payload,
         headers=_rp_headers(auth_session),
     )
@@ -293,6 +334,7 @@ async def _persist_price_adj_doc(doc_data: dict) -> None:
                 store_sid=doc_data.get("store_sid"),
                 sbs_sid=doc_data.get("sbs_sid"),
                 adj_sid=doc_data.get("adj_sid"),
+                note=doc_data.get("note"),
                 price_lvl_sid=doc_data.get("price_lvl_sid"),
                 item_count=doc_data.get("item_count", 0),
                 posted_count=doc_data.get("posted_count", 0),
@@ -306,17 +348,36 @@ async def _persist_price_adj_doc(doc_data: dict) -> None:
                 api_get_response=doc_data.get("api_get_response"),
                 api_finalize_payload=doc_data.get("api_finalize_payload"),
                 api_finalize_response=doc_data.get("api_finalize_response"),
+                api_comment_payload=doc_data.get("api_comment_payload"),
+                api_comment_response=doc_data.get("api_comment_response"),
                 items_data=doc_data.get("items_data"),
                 posted_at=now_pkt() if doc_data.get("status") == "posted" else None,
             )
             session.add(doc)
 
 
-# ── Batch processor ───────────────────────────────────────────────────────────
+# ── Already-processed guard ────────────────────────────────────────────────────
 
-async def _process_store_batch(
-    store_code: str,
-    store_name: str,
+async def _is_price_note_processed(note: str) -> bool:
+    """Return True if a doc with this note was already posted or partially posted."""
+    from app.db.postgres import get_session
+    from app.models.price_adjustment_doc import PriceAdjustmentDoc
+    from sqlalchemy import select
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(PriceAdjustmentDoc.id).where(
+                PriceAdjustmentDoc.note == note,
+                PriceAdjustmentDoc.status.in_(["posted", "partial"]),
+            ).limit(1)
+        )
+        return result.scalar() is not None
+
+
+# ── Note batch processor ───────────────────────────────────────────────────────
+
+async def _process_note_batch(
+    note: str,
     rows: list[dict],
     source_file: str,
     base_url: str,
@@ -327,223 +388,276 @@ async def _process_store_batch(
     sbs_sid_cache: dict,
     price_lvl_sid_cache: dict,
     item_sid_cache: dict,
-) -> list[dict]:
-    adj_docs: list[dict] = []
+    adj_reason_sid: Optional[str] = None,
+) -> dict:
+    """Process all rows for a single NOTE as one adjustment document."""
+    store_code = str(rows[0].get("STORE_CODE", "")).strip() or "1"
+    store_name = str(rows[0].get("STORE_NAME", "")).strip()
 
+    # Determine price level from first row
+    price_lvl_raw = rows[0].get("PRICE_LEVEL_NAME", "").strip()
+    try:
+        price_lvl = int(float(price_lvl_raw)) if price_lvl_raw else DEFAULT_PRICE_LEVEL
+    except (ValueError, TypeError):
+        price_lvl = DEFAULT_PRICE_LEVEL
+
+    price_lvl_sid = await _get_price_lvl_sid(price_lvl, price_lvl_sid_cache, oc)
     store_sid = await _get_store_sid(store_code, store_sid_cache, oc)
     sbs_sid = await _get_sbs_sid(sbs_sid_cache, oc)
 
+    doc_data: dict = {
+        "source_file": source_file,
+        "store_code": store_code,
+        "store_name": store_name,
+        "note": note,
+        "store_sid": store_sid,
+        "sbs_sid": sbs_sid,
+        "adj_sid": None,
+        "price_lvl_sid": price_lvl_sid,
+        "item_count": len(rows),
+        "posted_count": 0,
+        "error_count": 0,
+        "status": "error",
+        "error_message": None,
+        "items_data": [],
+    }
+    items_detail: list[dict] = []  # kept in outer scope for crash-recovery in except
+
+    # Guard: skip notes that were already successfully processed
+    if note:
+        try:
+            if await _is_price_note_processed(note):
+                logger.info("[PriceAdj] Note '%s' already processed — skipping", note)
+                doc_data["error_message"] = f"{note} already processed"
+                doc_data["error_count"] = len(rows)
+                await _persist_price_adj_doc(doc_data)
+                return doc_data
+        except Exception as guard_exc:
+            logger.warning("[PriceAdj] Could not check duplicate note '%s': %s", note, guard_exc)
+
     if not store_sid:
         logger.warning("No store SID for store_code=%s — skipping %d rows", store_code, len(rows))
-        doc_data = {
-            "source_file": source_file,
-            "store_code": store_code,
-            "store_name": store_name,
-            "store_sid": None,
-            "sbs_sid": sbs_sid,
-            "adj_sid": None,
-            "price_lvl_sid": None,
-            "item_count": len(rows),
-            "posted_count": 0,
-            "error_count": len(rows),
-            "status": "error",
-            "error_message": f"Store SID not found in Oracle for store_code={store_code}",
-            "items_data": [],
-        }
+        doc_data["error_message"] = f"Store SID not found in Oracle for store_code={store_code}"
+        doc_data["error_count"] = len(rows)
         await _persist_price_adj_doc(doc_data)
-        adj_docs.append(doc_data)
-        return adj_docs
+        return doc_data
 
-    for batch_start in range(0, len(rows), BATCH_SIZE):
-        batch_rows = rows[batch_start: batch_start + BATCH_SIZE]
+    try:
+        # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
+        adj_sid, create_payload, create_resp = await _create_price_adjustment_doc(
+            http, base_url, auth_session,
+            store_sid, sbs_sid or "", price_lvl_sid or "",
+            adj_reason_sid=adj_reason_sid,
+        )
+        doc_data["api_create_payload"] = create_payload
+        doc_data["api_create_response"] = create_resp
 
-        # Determine price level for this batch (use first row's value or default)
-        price_lvl_raw = batch_rows[0].get("PRICE_LEVEL_NAME", "").strip()
-        try:
-            price_lvl = int(float(price_lvl_raw)) if price_lvl_raw else DEFAULT_PRICE_LEVEL
-        except (ValueError, TypeError):
-            price_lvl = DEFAULT_PRICE_LEVEL
-
-        price_lvl_sid = await _get_price_lvl_sid(price_lvl, price_lvl_sid_cache, oc)
-
-        doc_data: dict = {
-            "source_file": source_file,
-            "store_code": store_code,
-            "store_name": store_name,
-            "store_sid": store_sid,
-            "sbs_sid": sbs_sid,
-            "adj_sid": None,
-            "price_lvl_sid": price_lvl_sid,
-            "item_count": len(batch_rows),
-            "posted_count": 0,
-            "error_count": 0,
-            "status": "error",
-            "error_message": None,
-            "items_data": [],
-        }
-        items_detail: list[dict] = []  # kept in outer scope for crash-recovery in except
-
-        try:
-            # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
-            adj_sid, create_payload, create_resp = await _create_price_adjustment_doc(
-                http, base_url, auth_session,
-                store_sid, sbs_sid or "", price_lvl_sid or "",
+        _resp_data = create_resp.get("data") if isinstance(create_resp, dict) else None
+        _data_ok = isinstance(_resp_data, list) and len(_resp_data) > 0
+        if not _data_ok or adj_sid is None:
+            _api_errors = None
+            if isinstance(create_resp, dict):
+                _api_errors = create_resp.get("errors") or create_resp.get("error") or create_resp.get("message")
+            if _data_ok and adj_sid is None:
+                _reason = "data array non-empty but 'sid' missing in data[0]"
+            elif _api_errors:
+                _reason = f"RetailPro error: {_api_errors}"
+            else:
+                _reason = "Create adjustment returned empty data array (no record was created)"
+            doc_data["error_message"] = (
+                f"[Step 1 failed] {_reason}. "
+                f"store_sid={doc_data.get('store_sid')} sbs_sid={doc_data.get('sbs_sid')} "
+                f"price_lvl_sid={doc_data.get('price_lvl_sid')}. "
+                f"Full response → see Step 1 Create Adjustment Response in API trace."
             )
-            doc_data["api_create_payload"] = create_payload
-            doc_data["api_create_response"] = create_resp
+            doc_data["error_count"] = len(rows)
+            await _persist_price_adj_doc(doc_data)
+            return doc_data
 
-            # A non-empty data array in the create response means success.
-            _resp_data = create_resp.get("data") if isinstance(create_resp, dict) else None
-            _data_ok = isinstance(_resp_data, list) and len(_resp_data) > 0
-            if not _data_ok or adj_sid is None:
-                # Pull the API's own error detail so the user can see the exact rejection reason.
-                _api_errors = None
-                if isinstance(create_resp, dict):
-                    _api_errors = create_resp.get("errors") or create_resp.get("error") or create_resp.get("message")
-                if _data_ok and adj_sid is None:
-                    _reason = f"data array non-empty but 'sid' missing in data[0]"
-                elif _api_errors:
-                    _reason = f"RetailPro error: {_api_errors}"
-                else:
-                    _reason = f"Create adjustment returned empty data array (no record was created)"
-                doc_data["error_message"] = (
-                    f"[Step 1 failed] {_reason}. "
-                    f"store_sid={doc_data.get('store_sid')} sbs_sid={doc_data.get('sbs_sid')} "
-                    f"price_lvl_sid={doc_data.get('price_lvl_sid')}. "
-                    f"Full response → see Step 1 Create Adjustment Response in API trace."
-                )
-                doc_data["error_count"] = len(batch_rows)
-                await _persist_price_adj_doc(doc_data)
-                adj_docs.append(doc_data)
-                continue
+        doc_data["adj_sid"] = adj_sid
 
-            doc_data["adj_sid"] = adj_sid
+        # Step 2: Resolve item SIDs from Oracle
+        items_for_api: list[dict] = []
+        items_detail.clear()
 
-            # Step 2: Resolve item SIDs from Oracle — catch per-item so one
-            # bad UPC / transient error does not abort the entire batch.
-            items_for_api: list[dict] = []
-            items_detail.clear()  # reset (initialised before try block)
+        for row in rows:
+            upc = row.get("SCANUPC", "").strip()
+            adj_value = _parse_adjvalue(row.get("ADJVALUE", "0") or "0")
 
-            for row in batch_rows:
-                upc = row.get("SCANUPC", "").strip()
-                adj_value = _parse_adjvalue(row.get("ADJVALUE", "0") or "0")
+            try:
+                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
+                item_err = None if item_sid else "Item SID not found in Oracle"
+            except Exception as oracle_exc:
+                item_sid = None
+                item_err = f"Oracle error: {oracle_exc}"
+                logger.warning("[PriceAdj] Oracle SID lookup failed upc=%s: %s", upc, oracle_exc)
 
-                try:
-                    item_sid = await _get_item_sid(upc, item_sid_cache, oc)
-                    item_err = None if item_sid else "Item SID not found in Oracle"
-                except Exception as oracle_exc:
-                    item_sid = None
-                    item_err = f"Oracle error: {oracle_exc}"
-                    logger.warning("[PriceAdj] Oracle SID lookup failed upc=%s: %s", upc, oracle_exc)
+            item_detail = {
+                "upc": upc,
+                "adj_value": adj_value,
+                "item_sid": item_sid,
+                "ok": False,
+                "error": item_err,
+            }
+            items_detail.append(item_detail)
 
-                item_detail = {
-                    "upc": upc,
-                    "adj_value": adj_value,
+            if item_sid:
+                items_for_api.append({
                     "item_sid": item_sid,
-                    "ok": False,
-                    "error": item_err,
-                }
-                items_detail.append(item_detail)
+                    "adj_value": adj_value,
+                    "upc": upc,
+                })
 
-                if item_sid:
-                    items_for_api.append({
-                        "item_sid": item_sid,
-                        "adj_value": adj_value,
-                        "upc": upc,
-                    })
+        doc_data["items_data"] = items_detail
 
+        if not items_for_api:
+            oracle_errors = [it["error"] for it in items_detail if it.get("error")]
+            first_err = oracle_errors[0] if oracle_errors else "unknown"
+            doc_data["error_message"] = (
+                f"[Step 2 failed] No item SIDs resolved for any of the {len(rows)} UPCs. "
+                f"First error: {first_err}"
+            )
+            doc_data["error_count"] = len(rows)
+            await _persist_price_adj_doc(doc_data)
+            return doc_data
+
+        # Step 3: Post adj items (price values)
+        items_payload, items_resp, items_status = await _post_price_adj_items(
+            http, base_url, auth_session, adj_sid, items_for_api
+        )
+        doc_data["api_items_payload"] = items_payload
+        doc_data["api_items_response"] = items_resp
+
+        _items_ok = items_status < 400
+        if _items_ok and isinstance(items_resp, dict):
+            _items_errors = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+            if _items_errors:
+                _items_ok = False
+
+        if not _items_ok:
+            _items_err_detail = None
+            if isinstance(items_resp, dict):
+                _items_err_detail = items_resp.get("errors") or items_resp.get("error") or items_resp.get("message")
+            doc_data["error_message"] = (
+                f"[Step 3 failed] POST adjitems returned HTTP {items_status}. "
+                + (f"RetailPro error: {_items_err_detail}. " if _items_err_detail else "")
+                + "Full response → see Step 3 POST Items Response in API trace."
+            )
+            doc_data["error_count"] = len(rows)
+            logger.warning(
+                "[PriceAdj] POST adjitems failed note='%s' adj_sid=%s HTTP %d",
+                note, adj_sid, items_status,
+            )
+            await _persist_price_adj_doc(doc_data)
+            return doc_data
+
+        # Step 4: Get rowversion
+        rowversion, get_resp = await _get_adjustment_rowversion(
+            http, base_url, auth_session, adj_sid
+        )
+        doc_data["api_get_response"] = get_resp
+
+        if rowversion is None:
+            _get_errors = None
+            if isinstance(get_resp, dict):
+                _get_errors = get_resp.get("errors") or get_resp.get("error") or get_resp.get("message")
+            _get_data = get_resp.get("data") if isinstance(get_resp, dict) else None
+            if isinstance(_get_data, list) and len(_get_data) == 0:
+                _rv_reason = f"GET adjustment returned empty data (adj_sid={adj_sid} not found)"
+            elif _get_errors:
+                _rv_reason = f"RetailPro error: {_get_errors}"
+            else:
+                _rv_reason = "'rowversion' field missing or null in GET response"
+            doc_data["error_message"] = (
+                f"[Step 3 failed] {_rv_reason}. "
+                f"Full response → see Step 3 GET Rowversion Response in API trace."
+            )
+            doc_data["error_count"] = len(rows)
+            await _persist_price_adj_doc(doc_data)
+            return doc_data
+
+        # Step 5: Finalize (status → 4)
+        fin_payload, fin_resp, fin_status = await _finalize_adjustment(
+            http, base_url, auth_session, adj_sid, rowversion
+        )
+        doc_data["api_finalize_payload"] = fin_payload
+        doc_data["api_finalize_response"] = fin_resp
+
+        _fin_ok = fin_status < 400
+        if _fin_ok and isinstance(fin_resp, dict):
+            _fin_errors = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+            if _fin_errors:
+                _fin_ok = False
+
+        if not _fin_ok:
+            _fin_err_detail = None
+            if isinstance(fin_resp, dict):
+                _fin_err_detail = fin_resp.get("errors") or fin_resp.get("error") or fin_resp.get("message")
+            doc_data["error_message"] = (
+                f"[Step 5 failed] PUT finalize returned HTTP {fin_status}. "
+                + (f"RetailPro error: {_fin_err_detail}. " if _fin_err_detail else "")
+                + "Full response → see Step 5 Finalize Response in API trace."
+            )
+            doc_data["error_count"] = len(rows)
+            logger.warning(
+                "[PriceAdj] Finalize PUT failed note='%s' adj_sid=%s HTTP %d",
+                note, adj_sid, fin_status,
+            )
+            await _persist_price_adj_doc(doc_data)
+            return doc_data
+
+        logger.info("[PriceAdj] Finalize PUT succeeded note='%s' adj_sid=%s HTTP %d", note, adj_sid, fin_status)
+
+        for item in doc_data["items_data"]:
+            if item.get("item_sid"):
+                item["ok"] = True
+
+        posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
+        errors = len(doc_data["items_data"]) - posted
+        doc_data.update({
+            "posted_count": posted,
+            "error_count": errors,
+            "status": "posted" if errors == 0 else ("partial" if posted > 0 else "error"),
+        })
+
+        # Step 6: Post comment
+        if note:
+            try:
+                comment_payload, comment_resp = await _post_price_adj_comment(
+                    http, base_url, auth_session, adj_sid, note
+                )
+                doc_data["api_comment_payload"] = comment_payload
+                doc_data["api_comment_response"] = comment_resp
+                logger.info("[PriceAdj] Comment posted for adj_sid=%s", adj_sid)
+            except Exception as comment_exc:
+                logger.warning(
+                    "[PriceAdj] Comment post failed for adj_sid=%s: %s", adj_sid, comment_exc
+                )
+                doc_data["api_comment_response"] = {"error": str(comment_exc)}
+
+    except Exception as exc:
+        logger.exception("Error processing price adj note='%s' store=%s", note, store_code)
+        exc_type = type(exc).__name__
+        exc_msg  = str(exc) or "(no message)"
+        doc_data["error_message"] = (
+            f"[Unhandled exception] {exc_type}: {exc_msg}\n"
+            f"note={note} store={store_code} adj_sid={doc_data.get('adj_sid')}"
+        )
+        doc_data["error_count"] = len(rows)
+        if not doc_data.get("items_data") and items_detail:
             doc_data["items_data"] = items_detail
 
-            if not items_for_api:
-                oracle_errors = [it["error"] for it in items_detail if it.get("error")]
-                first_err = oracle_errors[0] if oracle_errors else "unknown"
-                doc_data["error_message"] = (
-                    f"[Step 2 failed] No item SIDs resolved for any of the {len(batch_rows)} UPCs. "
-                    f"First error: {first_err}"
-                )
-                doc_data["error_count"] = len(batch_rows)
-                await _persist_price_adj_doc(doc_data)
-                adj_docs.append(doc_data)
-                continue
+    try:
+        await _persist_price_adj_doc(doc_data)
+    except Exception as db_exc:
+        logger.error("[PriceAdj] DB persist failed note='%s' store=%s: %s", note, store_code, db_exc)
 
-            # Step 3: Post adj items (price values)
-            items_payload, items_resp = await _post_price_adj_items(
-                http, base_url, auth_session, adj_sid, items_for_api
-            )
-            doc_data["api_items_payload"] = items_payload
-            doc_data["api_items_response"] = items_resp
-
-            # Step 4: Get rowversion
-            rowversion, get_resp = await _get_adjustment_rowversion(
-                http, base_url, auth_session, adj_sid
-            )
-            doc_data["api_get_response"] = get_resp
-
-            if rowversion is None:
-                _get_errors = None
-                if isinstance(get_resp, dict):
-                    _get_errors = get_resp.get("errors") or get_resp.get("error") or get_resp.get("message")
-                _get_data = get_resp.get("data") if isinstance(get_resp, dict) else None
-                if isinstance(_get_data, list) and len(_get_data) == 0:
-                    _rv_reason = f"GET adjustment returned empty data (adj_sid={adj_sid} not found)"
-                elif _get_errors:
-                    _rv_reason = f"RetailPro error: {_get_errors}"
-                else:
-                    _rv_reason = f"'rowversion' field missing or null in GET response"
-                doc_data["error_message"] = (
-                    f"[Step 3 failed] {_rv_reason}. "
-                    f"Full response → see Step 3 GET Rowversion Response in API trace."
-                )
-                doc_data["error_count"] = len(batch_rows)
-                await _persist_price_adj_doc(doc_data)
-                adj_docs.append(doc_data)
-                continue
-
-            # Step 5: Finalize (status → 4)
-            fin_payload, fin_resp = await _finalize_adjustment(
-                http, base_url, auth_session, adj_sid, rowversion
-            )
-            doc_data["api_finalize_payload"] = fin_payload
-            doc_data["api_finalize_response"] = fin_resp
-
-            for item in doc_data["items_data"]:
-                if item.get("item_sid"):
-                    item["ok"] = True
-
-            posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
-            errors = len(doc_data["items_data"]) - posted
-            doc_data.update({
-                "posted_count": posted,
-                "error_count": errors,
-                "status": "posted" if errors == 0 else ("partial" if posted > 0 else "error"),
-            })
-
-        except Exception as exc:
-            logger.exception("Error processing price adj store=%s batch_start=%d", store_code, batch_start)
-            exc_type = type(exc).__name__
-            exc_msg  = str(exc) or "(no message)"
-            doc_data["error_message"] = (
-                f"[Unhandled exception] {exc_type}: {exc_msg}\n"
-                f"store={store_code} adj_sid={doc_data.get('adj_sid')} batch_start={batch_start}"
-            )
-            doc_data["error_count"] = len(batch_rows)
-            # Preserve whatever items_detail was built before the crash so the
-            # dialog can show which UPCs were reached and which weren't.
-            if not doc_data.get("items_data") and items_detail:
-                doc_data["items_data"] = items_detail
-
-        try:
-            await _persist_price_adj_doc(doc_data)
-        except Exception as db_exc:
-            logger.error("[PriceAdj] DB persist failed store=%s: %s", store_code, db_exc)
-        adj_docs.append(doc_data)
-        logger.info(
-            "[PriceAdj] Store=%s adj_sid=%s items=%d posted=%d errors=%d",
-            store_code, doc_data.get("adj_sid"),
-            doc_data["item_count"], doc_data["posted_count"], doc_data["error_count"],
-        )
-
-    return adj_docs
+    logger.info(
+        "[PriceAdj] Note='%s' Store=%s adj_sid=%s items=%d posted=%d errors=%d",
+        note, store_code, doc_data.get("adj_sid"),
+        doc_data["item_count"], doc_data["posted_count"], doc_data["error_count"],
+    )
+    return doc_data
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -553,7 +667,7 @@ async def process_price_adjustment_csv(
     source_file: str = "price_adjustment.csv",
 ) -> dict:
     """
-    Full pipeline: parse CSV → group by store → process in 900-item batches.
+    Full pipeline: parse CSV → group by NOTE → one adjustment document per NOTE.
     Supports cooperative cancellation via request_cancel_import().
     """
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
@@ -581,18 +695,20 @@ async def process_price_adjustment_csv(
     auth_session = await get_auth_session()
     await sit_session(base_url, auth_session)
 
-    store_groups: dict[str, list[dict]] = {}
-    store_names: dict[str, str] = {}
+    # Group rows by NOTE — each unique note = one adjustment document
+    note_groups: dict[str, list[dict]] = {}
     for row in rows:
-        sc = str(row.get("STORE_CODE", "")).strip() or "1"
-        store_groups.setdefault(sc, []).append(row)
-        if sc not in store_names:
-            store_names[sc] = str(row.get("STORE_NAME", "")).strip()
+        n = str(row.get("NOTE", "") or "").strip()
+        note_groups.setdefault(n, []).append(row)
 
     store_sid_cache: dict = {}
     sbs_sid_cache: dict = {}
     price_lvl_sid_cache: dict = {}
     item_sid_cache: dict = {}
+
+    adj_reason_sid = await _get_adj_reason_sid(oc)
+    if not adj_reason_sid:
+        logger.warning("[PriceAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
 
     cancelled = False
     all_docs: list[dict] = []
@@ -601,18 +717,17 @@ async def process_price_adjustment_csv(
         # can take several minutes when the RetailPro server is busy.
         _timeout = httpx.Timeout(connect=30.0, read=300.0, write=60.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
-            for store_code, store_rows in store_groups.items():
+            for note, note_rows in note_groups.items():
                 if _is_import_cancelled(import_id):
                     logger.info(
-                        "Price adjustment import %s cancelled — stopped after %d stores",
+                        "Price adjustment import %s cancelled — stopped after %d notes",
                         import_id, len(all_docs),
                     )
                     cancelled = True
                     break
-                docs = await _process_store_batch(
-                    store_code=store_code,
-                    store_name=store_names.get(store_code, ""),
-                    rows=store_rows,
+                doc = await _process_note_batch(
+                    note=note,
+                    rows=note_rows,
                     source_file=source_file,
                     base_url=base_url,
                     auth_session=auth_session,
@@ -622,8 +737,9 @@ async def process_price_adjustment_csv(
                     sbs_sid_cache=sbs_sid_cache,
                     price_lvl_sid_cache=price_lvl_sid_cache,
                     item_sid_cache=item_sid_cache,
+                    adj_reason_sid=adj_reason_sid,
                 )
-                all_docs.extend(docs)
+                all_docs.append(doc)
     finally:
         await stand_session(base_url, auth_session)
         if _active_import_id == import_id:

@@ -16,6 +16,7 @@ class PriceAdjustmentDoc(Base):
     store_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sbs_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     adj_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     price_lvl_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     item_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     posted_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -30,6 +31,8 @@ class PriceAdjustmentDoc(Base):
     api_get_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     api_finalize_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     api_finalize_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    api_comment_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    api_comment_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Per-item detail: [{upc, adj_value, item_sid, ok, error}]
     items_data: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -47,6 +50,7 @@ def price_adj_doc_to_response(doc: PriceAdjustmentDoc) -> dict:
         "store_sid": doc.store_sid,
         "sbs_sid": doc.sbs_sid,
         "adj_sid": doc.adj_sid,
+        "note": doc.note,
         "price_lvl_sid": doc.price_lvl_sid,
         "item_count": doc.item_count,
         "posted_count": doc.posted_count,
@@ -60,6 +64,8 @@ def price_adj_doc_to_response(doc: PriceAdjustmentDoc) -> dict:
         "api_get_response": doc.api_get_response,
         "api_finalize_payload": doc.api_finalize_payload,
         "api_finalize_response": doc.api_finalize_response,
+        "api_comment_payload": doc.api_comment_payload,
+        "api_comment_response": doc.api_comment_response,
         "items_data": doc.items_data,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "posted_at": doc.posted_at.isoformat() if doc.posted_at else None,

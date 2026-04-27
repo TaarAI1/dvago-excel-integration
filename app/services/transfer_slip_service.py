@@ -511,6 +511,21 @@ async def _process_note_group(
     return doc_data
 
 
+# ── Duplicate-note guard ──────────────────────────────────────────────────────
+
+async def _note_already_processed(note: str) -> bool:
+    """Return True if *note* exists in transfer_slip_docs (any previous batch)."""
+    from app.db.postgres import get_session
+    from app.models.transfer_slip_doc import TransferSlipDoc
+    from sqlalchemy import select
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(TransferSlipDoc.id).where(TransferSlipDoc.note == note).limit(1)
+        )
+        return result.first() is not None
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 async def process_transfer_slip_csv(
@@ -557,6 +572,23 @@ async def process_transfer_slip_csv(
     try:
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
+                if await _note_already_processed(note):
+                    logger.warning("Skipping duplicate note: %s", note)
+                    dup_doc: dict = {
+                        "source_file":  source_file,
+                        "note":         note,
+                        "in_store_name":  note_rows[0].get("IN_STORE_NAME", "").strip(),
+                        "out_store_name": note_rows[0].get("OUT_STORE_NAME", "").strip(),
+                        "item_count":   len(note_rows),
+                        "posted_count": 0,
+                        "error_count":  len(note_rows),
+                        "status":       "error",
+                        "error_message": f'"{note}" has already been processed',
+                    }
+                    await _persist_slip_doc(dup_doc)
+                    all_docs.append(dup_doc)
+                    continue
+
                 doc = await _process_note_group(
                     note=note,
                     rows=note_rows,
