@@ -336,7 +336,7 @@ async def _finalize_grn(
     PUT /api/backoffice/receiving/{vousid}
     Returns (payload_sent, response_json).
     """
-    payload = {"data": [{"rowversion": rowversion, "status": 4}]}
+    payload = {"data": [{"rowversion": rowversion, "status": 4, "approvstatus": 2, "publishstatus": 2}]}
     resp = await http.put(
         f"{base_url}/api/backoffice/receiving/{vousid}",
         json=payload,
