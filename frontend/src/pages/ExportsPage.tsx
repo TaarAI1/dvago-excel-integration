@@ -2,14 +2,15 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Box, Typography, Tabs, Tab, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, CircularProgress,
-  Select, MenuItem, FormControl, IconButton, Tooltip, Button,
-  Dialog, DialogContent, DialogActions, LinearProgress,
+  Select, MenuItem, FormControl, InputLabel, IconButton, Tooltip, Button,
+  Dialog, DialogContent, DialogActions, LinearProgress, TextField, Alert,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
 import StopCircleOutlinedIcon from '@mui/icons-material/StopCircleOutlined'
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 import { fmtDateTime } from '../utils/time'
@@ -522,6 +523,182 @@ function SalesExportTab() {
   )
 }
 
+// ── Manual Export tab ─────────────────────────────────────────────────────────
+
+interface StoreOption {
+  store_no: number
+  store_name: string | null
+}
+
+function ManualExportTab() {
+  // Today's date in YYYY-MM-DD for default values
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = today.slice(0, 8) + '01'
+
+  const [storeNo, setStoreNo]     = useState<string>('')
+  const [fromDate, setFromDate]   = useState(firstOfMonth)
+  const [toDate, setToDate]       = useState(today)
+  const [downloading, setDownloading] = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+  const [success, setSuccess]     = useState<string | null>(null)
+
+  const { data: storesData, isLoading: storesLoading, error: storesError } = useQuery<{ stores: StoreOption[] }>({
+    queryKey: ['manual-export-stores'],
+    queryFn: () => apiClient.get('/api/sales-export/stores').then(r => r.data),
+    staleTime: 5 * 60_000,
+  })
+  const stores = storesData?.stores ?? []
+
+  const handleExport = async () => {
+    if (!storeNo) { setError('Please select a store.'); return }
+    if (!fromDate || !toDate) { setError('Please select both From and To dates.'); return }
+    if (fromDate > toDate) { setError('"From date" cannot be after "To date".'); return }
+
+    setError(null)
+    setSuccess(null)
+    setDownloading(true)
+
+    try {
+      const res = await apiClient.post(
+        '/api/sales-export/manual-download',
+        { store_no: Number(storeNo), from_date: fromDate, to_date: toDate },
+        { responseType: 'blob' },
+      )
+
+      const contentDisposition = res.headers['content-disposition'] ?? ''
+      const match = contentDisposition.match(/filename="?([^"]+)"?/)
+      const filename = match ? match[1] : `manual_export_${storeNo}_${fromDate}_${toDate}.csv`
+
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }))
+      const a   = document.createElement('a')
+      a.href    = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+
+      setSuccess(`Downloaded ${filename}`)
+    } catch (err: unknown) {
+      let msg = 'Export failed.'
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { data?: { detail?: string }; status?: number } }
+        if (axiosErr.response?.status === 404) {
+          msg = 'No data found for the selected store and date range.'
+        } else if (axiosErr.response?.data?.detail) {
+          msg = axiosErr.response.data.detail
+        }
+      }
+      setError(msg)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <Box sx={{ maxWidth: 680 }}>
+      <Typography sx={{ fontSize: '0.8rem', color: '#6b7280', mb: 2.5 }}>
+        Select a store and date range to run the export query and download the result as a CSV file.
+      </Typography>
+
+      {storesError && (
+        <Alert severity="warning" sx={{ mb: 2, fontSize: '0.78rem' }}>
+          Could not load store list — check Oracle connection settings.
+        </Alert>
+      )}
+
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Store dropdown */}
+        <FormControl size="small" fullWidth>
+          <InputLabel sx={{ fontSize: '0.82rem' }}>Store</InputLabel>
+          <Select
+            value={storeNo}
+            label="Store"
+            onChange={e => setStoreNo(e.target.value)}
+            disabled={storesLoading}
+            sx={{ fontSize: '0.82rem' }}
+            displayEmpty
+          >
+            {storesLoading ? (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} /> Loading stores…
+              </MenuItem>
+            ) : stores.length === 0 ? (
+              <MenuItem disabled>No stores available</MenuItem>
+            ) : (
+              stores.map(s => (
+                <MenuItem key={s.store_no} value={String(s.store_no)}>
+                  <Typography sx={{ fontSize: '0.82rem' }}>
+                    <b>{s.store_no}</b>
+                    {s.store_name ? ` — ${s.store_name}` : ''}
+                  </Typography>
+                </MenuItem>
+              ))
+            )}
+          </Select>
+        </FormControl>
+
+        {/* Date range */}
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <TextField
+            label="From Date"
+            type="date"
+            size="small"
+            fullWidth
+            value={fromDate}
+            onChange={e => setFromDate(e.target.value)}
+            slotProps={{ inputLabel: { shrink: true } }}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.82rem' } }}
+          />
+          <TextField
+            label="To Date"
+            type="date"
+            size="small"
+            fullWidth
+            value={toDate}
+            onChange={e => setToDate(e.target.value)}
+            slotProps={{ inputLabel: { shrink: true } }}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.82rem' } }}
+          />
+        </Box>
+
+        {/* Feedback */}
+        {error && (
+          <Alert severity="error" onClose={() => setError(null)} sx={{ fontSize: '0.78rem' }}>
+            {error}
+          </Alert>
+        )}
+        {success && (
+          <Alert severity="success" onClose={() => setSuccess(null)} sx={{ fontSize: '0.78rem' }}>
+            {success}
+          </Alert>
+        )}
+
+        {/* Export button */}
+        <Box>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={handleExport}
+            disabled={downloading || !storeNo}
+            startIcon={downloading
+              ? <CircularProgress size={14} sx={{ color: 'inherit' }} />
+              : <FileDownloadOutlinedIcon sx={{ fontSize: 16 }} />}
+            sx={{
+              height: 34, fontSize: '0.8rem', fontWeight: 600,
+              bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' },
+              '&:disabled': { bgcolor: '#93c5fd', color: 'white' },
+              textTransform: 'none', borderRadius: '6px', px: 2.5,
+            }}
+          >
+            {downloading ? 'Exporting…' : 'Export & Download CSV'}
+          </Button>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ExportsPage() {
@@ -546,9 +723,11 @@ export default function ExportsPage() {
             '& .Mui-selected': { color: '#1a56db', fontWeight: 600 },
           }}>
           <Tab label="Sales Export" />
+          <Tab label="Manual Export" />
         </Tabs>
         <Box sx={{ p: { xs: 1.5, sm: 2.5 } }}>
           {tab === 0 && <SalesExportTab />}
+          {tab === 1 && <ManualExportTab />}
         </Box>
       </Box>
     </Box>

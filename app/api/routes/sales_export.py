@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, BackgroundTasks, Query, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy import select, func
 
@@ -8,6 +10,12 @@ from app.models.activity_log import ActivityLog, log_to_response
 from app.models.sales_export_run import SalesExportRun, SalesExportStore, run_to_response, store_to_response
 
 router = APIRouter(prefix="/api/sales-export", tags=["sales-export"])
+
+
+class ManualExportRequest(BaseModel):
+    store_no: int
+    from_date: str  # YYYY-MM-DD
+    to_date: str    # YYYY-MM-DD
 
 
 @router.post("/trigger")
@@ -91,3 +99,94 @@ async def get_last_run(_: str = Depends(get_current_user)):
     if not log:
         return {"last_run": None}
     return {"last_run": log_to_response(log)}
+
+
+@router.get("/stores")
+async def get_store_list(_: str = Depends(get_current_user)):
+    """Fetch active store list from Oracle for the manual export dropdown."""
+    from app.jobs.sales_export_job import _load_oracle_settings
+    from app.services.oracle_service import run_query
+
+    oc = await _load_oracle_settings()
+    if not oc["host"] or not oc["service"]:
+        raise HTTPException(status_code=503, detail="Oracle connection not configured.")
+
+    try:
+        sbs_df = await run_query(
+            oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
+            "SELECT sid FROM rps.subsidiary WHERE sbs_no = 1",
+        )
+        if sbs_df is None or sbs_df.is_empty():
+            raise HTTPException(status_code=404, detail="No subsidiary found with sbs_no = 1.")
+
+        sbs_sid = str(sbs_df.rows()[0][0])
+
+        stores_df = await run_query(
+            oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
+            f"SELECT store_no, store_name FROM rps.store WHERE active = 1 AND sbs_sid = '{sbs_sid}'",
+        )
+        if stores_df is None or stores_df.is_empty():
+            return {"stores": []}
+
+        return {
+            "stores": [
+                {"store_no": int(r[0]), "store_name": str(r[1]) if r[1] is not None else None}
+                for r in stores_df.rows()
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch stores: {exc}")
+
+
+@router.post("/manual-download")
+async def manual_export_download(
+    body: ManualExportRequest,
+    _: str = Depends(get_current_user),
+):
+    """Run the export query for a single store + date range and stream back a CSV file."""
+    from app.jobs.sales_export_job import _load_oracle_settings, _inject_store
+    from app.services.oracle_service import run_query
+    from app.db.settings_store import get_setting
+    import logging
+    logger = logging.getLogger(__name__)
+
+    oc = await _load_oracle_settings()
+    if not oc["host"] or not oc["service"]:
+        raise HTTPException(status_code=503, detail="Oracle connection not configured.")
+
+    sql_template = (await get_setting("sales_export_sql", "")) or ""
+    if not sql_template:
+        raise HTTPException(status_code=503, detail="Export SQL query is not configured.")
+
+    # Inject store filter
+    sql = _inject_store(sql_template, body.store_no)
+
+    # Inject date filters (replace {from_date} and {to_date} placeholders)
+    if "{from_date}" in sql:
+        sql = sql.replace("{from_date}", body.from_date)
+    else:
+        logger.warning("No {from_date} placeholder in SQL — from_date filter not applied.")
+
+    if "{to_date}" in sql:
+        sql = sql.replace("{to_date}", body.to_date)
+    else:
+        logger.warning("No {to_date} placeholder in SQL — to_date filter not applied.")
+
+    try:
+        df = await run_query(oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"], sql)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Query failed: {exc}")
+
+    if df is None or df.is_empty():
+        raise HTTPException(status_code=404, detail="No data found for the selected store and date range.")
+
+    csv_bytes = df.write_csv().encode("utf-8")
+    filename = f"manual_export_{body.store_no}_{body.from_date}_{body.to_date}.csv"
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
