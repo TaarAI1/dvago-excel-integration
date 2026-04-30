@@ -12,6 +12,7 @@ import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import HourglassTopIcon from '@mui/icons-material/HourglassTop'
 import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined'
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../api/client'
 import { fmtDateTime } from '../utils/time'
@@ -383,6 +384,32 @@ function ItemMasterTab() {
     abortRef.current?.abort()
   }
 
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownloadCsv = async () => {
+    if (!selectedBatch) return
+    setDownloading(true)
+    try {
+      const params = new URLSearchParams({ source_file: selectedBatch })
+      const res = await apiClient.get(`/api/item-master/batch-download?${params}`, {
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(res.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      const stem = selectedBatch.split('::')[0].replace(/\.[^.]+$/, '')
+      a.download = `${stem}_processed.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      setToast({ severity: 'error', msg: 'Failed to download processed CSV.' })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   // ── Batches list ─────────────────────────────────────────────────────────
   const { data: batches, isFetching: batchFetching } = useQuery<Batch[]>({
     queryKey: ['im-batches'],
@@ -532,6 +559,26 @@ function ItemMasterTab() {
             </Button>
           </Tooltip>
         )}
+
+        <Tooltip title="Download processed CSV with RetailPro UPCs">
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!selectedBatch || downloading}
+              onClick={handleDownloadCsv}
+              startIcon={downloading
+                ? <CircularProgress size={12} />
+                : <FileDownloadOutlinedIcon sx={{ fontSize: 15 }} />}
+              sx={{
+                height: 30, fontSize: '0.75rem', textTransform: 'none',
+                borderColor: '#d1d5db', color: '#374151',
+                '&:hover': { borderColor: '#9ca3af', bgcolor: '#f9fafb' },
+              }}>
+              {downloading ? 'Downloading…' : 'Download Processed CSV'}
+            </Button>
+          </span>
+        </Tooltip>
 
         <Tooltip title="Refresh">
           <IconButton size="small"

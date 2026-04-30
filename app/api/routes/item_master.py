@@ -9,7 +9,8 @@ POST /api/item-master/kill       – cancel the running import after the current
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import StreamingResponse
 from typing import Any
 
 from app.core.security import get_current_user
@@ -174,3 +175,76 @@ async def import_excel(
         raise HTTPException(status_code=500, detail=str(exc))
 
     return result
+
+
+@router.get("/batch-download")
+async def download_batch_csv(
+    source_file: str = Query(..., description="Batch key (source_file) to download"),
+    _: str = Depends(get_current_user),
+):
+    """
+    Download a processed CSV for an item master batch.
+
+    Every row from the batch is included. The UPC column is filled with the
+    value RetailPro returned (or assigned) for successfully posted items.
+    For items that failed to post, the UPC column is left blank so the user
+    can clearly see which entries need attention.
+    """
+    import csv
+    import io
+    from sqlalchemy import select
+    from app.db.postgres import get_session
+    from app.models.document import Document
+
+    # Internal keys written by _persist_result that must not appear in the download
+    SKIP_KEYS = {"_payload_sent", "_dcs_debug", "_vend_debug"}
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(Document)
+            .where(
+                Document.source_file == source_file,
+                Document.document_type == "item_master",
+            )
+            .order_by(Document.created_at.asc())
+        )
+        docs = result.scalars().all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents found for this batch.")
+
+    # Build an ordered, deduplicated list of CSV columns, skipping internal keys.
+    # UPC is always placed first so it is easy to spot.
+    seen_keys: set[str] = set()
+    all_keys: list[str] = []
+    for doc in docs:
+        for k in (doc.original_data or {}):
+            if k not in seen_keys and k not in SKIP_KEYS:
+                seen_keys.add(k)
+                all_keys.append(k)
+
+    if "UPC" in seen_keys:
+        all_keys.remove("UPC")
+        all_keys.insert(0, "UPC")
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=all_keys, extrasaction="ignore")
+    writer.writeheader()
+
+    for doc in docs:
+        row = {k: v for k, v in (doc.original_data or {}).items() if k not in SKIP_KEYS}
+        # Failed items get a blank UPC regardless of what was in the source file
+        if not doc.posted:
+            row["UPC"] = ""
+        writer.writerow(row)
+
+    # Derive a sensible filename: strip the timestamp suffix added by the batch key
+    base_name = source_file.split("::")[0]
+    stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+    download_name = f"{stem}_processed.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
