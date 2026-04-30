@@ -136,7 +136,9 @@ async def import_qty_adjustment(
     _: str = Depends(get_current_user),
 ):
     """Manual CSV upload — runs the full pipeline immediately."""
+    import asyncio
     from app.services.qty_adjustment_service import process_qty_adjustment_csv
+    from app.services.email_service import send_batch_email
     from app.core.timezone import now_pkt
 
     raw = await file.read()
@@ -151,4 +153,5 @@ async def import_qty_adjustment(
         logger.exception("QTY adjustment import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    asyncio.create_task(send_batch_email("qty_adjustment", batch_key, result))
     return result

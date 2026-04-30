@@ -122,7 +122,9 @@ async def import_csv(
     Accepts the same CSV format produced by FTP polling.
     Returns a summary with total, created, updated, and error counts.
     """
+    import asyncio
     from app.services.item_master_service import process_csv_batch
+    from app.services.email_service import send_batch_email
     from app.core.timezone import now_pkt
 
     raw = await file.read()
@@ -136,6 +138,7 @@ async def import_csv(
         logger.exception("Item master CSV import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    asyncio.create_task(send_batch_email("item_master", batch_key, result))
     return result
 
 
@@ -158,7 +161,9 @@ async def import_excel(
 
     Returns a summary with per-row results.
     """
+    import asyncio
     from app.services.item_master_service import process_excel_batch
+    from app.services.email_service import send_batch_email
     from app.core.timezone import now_pkt
 
     raw = await file.read()
@@ -174,6 +179,7 @@ async def import_excel(
         logger.exception("Item master import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    asyncio.create_task(send_batch_email("item_master", batch_key, result))
     return result
 
 

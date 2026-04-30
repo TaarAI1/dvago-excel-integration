@@ -63,7 +63,9 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
             continue
 
         try:
+            import asyncio
             from app.services.item_master_service import process_excel_batch, process_csv_batch
+            from app.services.email_service import send_batch_email
             # Unique batch key: filename + timestamp so re-uploads of the same
             # filename always produce a separate, distinct batch.
             batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
@@ -82,6 +84,7 @@ async def _poll_item_master(host: str, port: int, user: str, password: str) -> t
             )
             logger.info(summary)
             status_str = "success"
+            asyncio.create_task(send_batch_email("item_master", batch_key, result))
         except Exception as exc:
             summary = f"Item Master processing failed for {filename}: {exc}"
             logger.error(summary)
@@ -143,7 +146,9 @@ async def _poll_qty_adjustment(host: str, port: int, user: str, password: str) -
             continue
 
         try:
+            import asyncio
             from app.services.qty_adjustment_service import process_qty_adjustment_csv
+            from app.services.email_service import send_batch_email
             batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
             result = await process_qty_adjustment_csv(file_bytes, source_file=batch_key)
             docs_processed += result.get("total_docs", 0)
@@ -156,6 +161,7 @@ async def _poll_qty_adjustment(host: str, port: int, user: str, password: str) -
             )
             logger.info(summary)
             status_str = "success"
+            asyncio.create_task(send_batch_email("qty_adjustment", batch_key, result))
         except Exception as exc:
             summary = f"QtyAdj processing failed for {filename}: {exc}"
             logger.error(summary)
@@ -216,7 +222,9 @@ async def _poll_price_adjustment(host: str, port: int, user: str, password: str)
             continue
 
         try:
+            import asyncio
             from app.services.price_adjustment_service import process_price_adjustment_csv
+            from app.services.email_service import send_batch_email
             batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
             result = await process_price_adjustment_csv(file_bytes, source_file=batch_key)
             docs_processed += result.get("total_docs", 0)
@@ -229,6 +237,7 @@ async def _poll_price_adjustment(host: str, port: int, user: str, password: str)
             )
             logger.info(summary)
             status_str = "success"
+            asyncio.create_task(send_batch_email("price_adjustment", batch_key, result))
         except Exception as exc:
             summary = f"PriceAdj processing failed for {filename}: {exc}"
             logger.error(summary)
@@ -289,7 +298,9 @@ async def _poll_grn(host: str, port: int, user: str, password: str) -> tuple[int
             continue
 
         try:
+            import asyncio
             from app.services.grn_service import process_grn_csv
+            from app.services.email_service import send_batch_email
             batch_key = f"{filename}::{now_pkt().strftime('%Y%m%d_%H%M%S')}"
             result = await process_grn_csv(file_bytes, source_file=batch_key)
             docs_processed += result.get("total_docs", 0)
@@ -302,6 +313,7 @@ async def _poll_grn(host: str, port: int, user: str, password: str) -> tuple[int
             )
             logger.info(summary)
             status_str = "success"
+            asyncio.create_task(send_batch_email("grn", batch_key, result))
         except Exception as exc:
             summary = f"GRN processing failed for {filename}: {exc}"
             logger.error(summary)

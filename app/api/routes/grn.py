@@ -51,7 +51,9 @@ async def import_grn(
     _: str = Depends(get_current_user),
 ):
     """Manual CSV upload — runs the full GRN pipeline immediately."""
+    import asyncio
     from app.services.grn_service import process_grn_csv
+    from app.services.email_service import send_batch_email
     from app.core.timezone import now_pkt
 
     raw       = await file.read()
@@ -66,6 +68,7 @@ async def import_grn(
         logger.exception("GRN import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    asyncio.create_task(send_batch_email("grn", batch_key, result))
     return result
 
 
