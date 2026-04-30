@@ -1828,29 +1828,60 @@ function TransferSlipTab() {
   const [page, setPage]                   = useState(0)
   const pageSize                           = 100
   const [uploading, setUploading]         = useState(false)
-  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' } | null>(null)
+  const [killing, setKilling]             = useState(false)
+  const [toast, setToast]                 = useState<{ msg: string; severity: 'success' | 'error' | 'warning' } | null>(null)
+  const abortRef                          = useRef<AbortController | null>(null)
+
+  const { data: runStatus } = useQuery<{ running: boolean }>({
+    queryKey: ['ts-status'],
+    queryFn: () => apiClient.get('/api/transfer-slip/status').then(r => r.data),
+    refetchInterval: 3_000,
+  })
+  const isRunning = uploading || !!runStatus?.running
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    const controller = new AbortController()
+    abortRef.current = controller
     setUploading(true)
+    setKilling(false)
     try {
       const form = new FormData()
       form.append('file', file)
       const res = await apiClient.post('/api/transfer-slip/import', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal,
       })
       const d = res.data
-      setToast({ severity: 'success', msg: `Done — ${d.total_docs} slips, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      if (d.cancelled) {
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} slips processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+      } else {
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} slips, ${d.posted_docs} posted, ${d.error_docs} errors` })
+      }
       qc.invalidateQueries({ queryKey: ['ts-batches'] })
       qc.invalidateQueries({ queryKey: ['ts-docs'] })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
-      setToast({ severity: 'error', msg })
+      const isCancelled = (err as { name?: string })?.name === 'CanceledError'
+                       || (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isCancelled) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || String(err)
+        setToast({ severity: 'error', msg })
+      }
+      qc.invalidateQueries({ queryKey: ['ts-batches'] })
+      qc.invalidateQueries({ queryKey: ['ts-docs'] })
     } finally {
+      abortRef.current = null
       setUploading(false)
+      setKilling(false)
     }
+  }
+
+  const handleKill = async () => {
+    setKilling(true)
+    try { await apiClient.post('/api/transfer-slip/kill') } catch { /* ignore */ }
+    abortRef.current?.abort()
   }
 
   const { data: batches, isFetching: batchFetching } = useQuery<TransferSlipBatch[]>({
@@ -1875,7 +1906,7 @@ function TransferSlipTab() {
   const { data, isLoading, isFetching } = useQuery<{ total: number; items: TransferSlipDoc[] }>({
     queryKey: ['ts-docs', params],
     queryFn: () => apiClient.get('/api/transfer-slip/docs', { params }).then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: isRunning ? 3_000 : 30_000,
     enabled: !!selectedBatch,
   })
 
@@ -1944,14 +1975,38 @@ function TransferSlipTab() {
             <MenuItem value="error">Error</MenuItem>
           </Select>
         </FormControl>
-        <Tooltip title="Upload CSV manually">
-          <Button component="label" size="small" variant="contained" disabled={uploading}
-            sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
-              bgcolor: '#0ea5e9', '&:hover': { bgcolor: '#0284c7' } }}>
-            {uploading ? <CircularProgress size={13} sx={{ color: 'white' }} /> : 'Upload CSV'}
-            <input type="file" accept=".csv" hidden onChange={handleUpload} />
-          </Button>
-        </Tooltip>
+        {/* Manual CSV upload / Kill */}
+        {isRunning ? (
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            <Button size="small" variant="contained" disabled
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#0ea5e9', pointerEvents: 'none' }}>
+              <CircularProgress size={12} sx={{ color: 'white', mr: 0.75 }} />
+              Processing…
+            </Button>
+            <Tooltip title="Stop import after current transfer slip">
+              <Button size="small" variant="contained" disabled={killing}
+                onClick={handleKill}
+                startIcon={killing
+                  ? <CircularProgress size={12} sx={{ color: 'white' }} />
+                  : <StopCircleOutlinedIcon sx={{ fontSize: 15 }} />}
+                sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                  bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' } }}>
+                {killing ? 'Stopping…' : 'Stop'}
+              </Button>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title="Upload Transfer Slip CSV manually">
+            <Button component="label" size="small" variant="contained"
+              sx={{ height: 30, fontSize: '0.75rem', textTransform: 'none',
+                bgcolor: '#0ea5e9', '&:hover': { bgcolor: '#0284c7' } }}>
+              Upload CSV
+              <input type="file" accept=".csv" hidden onChange={handleUpload} />
+            </Button>
+          </Tooltip>
+        )}
+
         <Tooltip title="Refresh">
           <IconButton size="small"
             onClick={() => {

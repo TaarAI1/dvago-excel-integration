@@ -151,13 +151,20 @@ async def _get_vendor_sid(vendor_code: str, cache: dict, oc: dict) -> Optional[s
     return cache[key]
 
 
-async def _get_item_sid(upc: str, cache: dict, oc: dict) -> Optional[str]:
+async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
+    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found."""
     key = str(upc).strip()
     if key not in cache:
         row = await _oracle_row(
-            f"SELECT sid FROM rps.invn_sbs_item WHERE upc = '{key}'", oc
+            f"SELECT sid, active FROM rps.invn_sbs_item WHERE upc = '{key}'", oc
         )
-        cache[key] = str(row[0]) if row and row[0] else None
+        if row:
+            cache[key] = (
+                str(row[0]) if row[0] is not None else None,
+                int(row[1]) if row[1] is not None else None,
+            )
+        else:
+            cache[key] = (None, None)
     return cache[key]
 
 
@@ -402,7 +409,7 @@ async def _process_note_group(
     oc: dict,
     store_cache: dict,
     vendor_cache: dict,
-    item_cache: dict,
+    item_info_cache: dict,
 ) -> list[dict]:
     """
     Process all rows for a single note group.
@@ -460,8 +467,10 @@ async def _process_note_group(
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
-    # Resolve all item SIDs upfront
+    # ── Pre-flight: validate every item before any API call ──────────────────
     items_detail: list[dict] = []
+    preflight_has_error = False
+
     for row in rows:
         upc = row.get("UPC", "").strip()
         try:
@@ -469,47 +478,57 @@ async def _process_note_group(
         except (ValueError, TypeError):
             qty = 0
 
-        item_sid = await _get_item_sid(upc, item_cache, oc)
+        try:
+            item_sid, item_active = await _get_item_info(upc, item_info_cache, oc)
+        except Exception as _exc:
+            item_sid, item_active = None, None
+            logger.warning("[GRN] Oracle item lookup failed upc=%s: %s", upc, _exc)
+
+        if item_sid is None:
+            item_err = "Item not found in Oracle"
+            preflight_has_error = True
+        elif item_active == 0:
+            item_err = "Item is inactive"
+            preflight_has_error = True
+        else:
+            item_err = None
+
         items_detail.append({
             "upc":      upc,
             "qty":      qty,
             "item_sid": item_sid,
+            "active":   item_active,
             "ok":       False,
-            "error":    None if item_sid else "Item SID not found in Oracle",
+            "error":    item_err,
         })
 
-    # Chunk into batches of GRN_ITEM_LIMIT
-    valid_items  = [it for it in items_detail if it.get("item_sid")]
-    invalid_items = [it for it in items_detail if not it.get("item_sid")]
-
-    # If no valid items, persist a single error doc
-    if not valid_items:
+    if preflight_has_error:
         err_doc = {
-            "source_file": source_file,
-            "note": note,
-            "store_code": store_code,
-            "store_name": store_name,
-            "storesid": storesid,
-            "sbssid": sbssid,
-            "vendsid": vendsid,
-            "vousid": None,
-            "item_count": len(rows),
-            "posted_count": 0,
-            "error_count": len(rows),
-            "status": "error",
-            "error_message": "No item SIDs resolved — all UPCs missing from Oracle",
+            "source_file":   source_file,
+            "note":          note,
+            "store_code":    store_code,
+            "store_name":    store_name,
+            "storesid":      storesid,
+            "sbssid":        sbssid,
+            "vendsid":       vendsid,
+            "vousid":        None,
+            "item_count":    len(rows),
+            "posted_count":  0,
+            "error_count":   len(rows),
+            "status":        "error",
+            "error_message": (
+                "One or more items in this group are not found or inactive in Oracle. "
+                "Group was not processed — see item details for per-item errors."
+            ),
             "items_data": items_detail,
         }
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
-    # Process in chunks of 900
-    chunks = [valid_items[i:i + GRN_ITEM_LIMIT] for i in range(0, len(valid_items), GRN_ITEM_LIMIT)]
+    # All items valid — chunk into batches of GRN_ITEM_LIMIT
+    chunks = [items_detail[i:i + GRN_ITEM_LIMIT] for i in range(0, len(items_detail), GRN_ITEM_LIMIT)]
 
     for chunk_idx, chunk in enumerate(chunks):
-        # Combine chunk items with invalid items for tracking (invalid shown once in first chunk)
-        chunk_items_data = list(chunk) + (invalid_items if chunk_idx == 0 else [])
-
         doc_data: dict = {
             "source_file": source_file,
             "note": note,
@@ -519,12 +538,12 @@ async def _process_note_group(
             "sbssid": sbssid,
             "vendsid": vendsid,
             "vousid": None,
-            "item_count": len(chunk_items_data),
+            "item_count": len(chunk),
             "posted_count": 0,
-            "error_count": len(invalid_items) if chunk_idx == 0 else 0,
+            "error_count": 0,
             "status": "error",
             "error_message": None,
-            "items_data": chunk_items_data,
+            "items_data": list(chunk),
         }
 
         try:
@@ -611,7 +630,7 @@ async def _process_note_group(
         except Exception as exc:
             logger.exception("Error processing GRN note='%s' chunk=%d", note, chunk_idx)
             doc_data["error_message"] = str(exc)
-            doc_data["error_count"]   = len(chunk_items_data)
+            doc_data["error_count"]   = len(chunk)
 
         try:
             await _persist_grn_doc(doc_data)
@@ -690,10 +709,10 @@ async def process_grn_csv(
         )
         already_processed_notes: set[str] = {r[0] for r in _result.all() if r[0]}
 
-    store_cache:  dict = {}
-    vendor_cache: dict = {}
-    item_cache:   dict = {}
-    all_docs:     list[dict] = []
+    store_cache:     dict = {}
+    vendor_cache:    dict = {}
+    item_info_cache: dict = {}
+    all_docs:        list[dict] = []
 
     import_id = str(_uuid.uuid4())
     _active_import_id = import_id
@@ -779,7 +798,7 @@ async def process_grn_csv(
                     oc=oc,
                     store_cache=store_cache,
                     vendor_cache=vendor_cache,
-                    item_cache=item_cache,
+                    item_info_cache=item_info_cache,
                 )
                 all_docs.extend(docs)
     finally:

@@ -1,6 +1,8 @@
 """
 Transfer Slip routes.
 
+GET  /api/transfer-slip/status    – whether an import is currently running
+POST /api/transfer-slip/kill      – cancel the running import after current note-group
 GET  /api/transfer-slip/batches   – one row per source_file with counts
 GET  /api/transfer-slip/docs      – paginated list of transfer slip documents
 GET  /api/transfer-slip/docs/{id} – single document detail (full API traces)
@@ -18,6 +20,29 @@ from app.models.transfer_slip_doc import TransferSlipDoc, transfer_slip_doc_to_r
 
 router = APIRouter(prefix="/api/transfer-slip", tags=["transfer-slip"])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/status")
+async def transfer_slip_status(_: str = Depends(get_current_user)):
+    """Return whether a Transfer Slip import is currently running."""
+    from app.services.transfer_slip_service import get_active_import_id
+    active = get_active_import_id()
+    return {"running": active is not None, "import_id": active}
+
+
+@router.post("/kill")
+async def transfer_slip_kill(_: str = Depends(get_current_user)):
+    """Cancel the running Transfer Slip import after the current note-group finishes."""
+    from app.services.transfer_slip_service import request_cancel_import, get_active_import_id
+    active = get_active_import_id()
+    if not active:
+        return {"cancelled": False, "message": "No Transfer Slip import is currently running."}
+    request_cancel_import()
+    return {
+        "cancelled": True,
+        "import_id": active,
+        "message": "Stop signal sent — will halt after the current note-group completes.",
+    }
 
 
 @router.get("/batches")

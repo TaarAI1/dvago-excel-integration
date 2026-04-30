@@ -113,12 +113,30 @@ async def _get_sbs_sid(cache: dict, oc: dict) -> Optional[str]:
     return cache["__sbs1__"]
 
 
-async def _get_item_sid(upc: str, cache: dict, oc: dict) -> Optional[str]:
+async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
+    from app.services.oracle_service import run_query
+    df = await run_query(
+        oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+    )
+    if df is None or df.is_empty():
+        return None
+    return df.row(0)
+
+
+async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
+    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found."""
     key = str(upc).strip()
     if key not in cache:
-        cache[key] = await _oracle_scalar(
-            f"SELECT sid FROM rps.invn_Sbs_item WHERE upc = '{key}'", oc
+        row = await _oracle_row(
+            f"SELECT sid, active FROM rps.invn_Sbs_item WHERE upc = '{key}'", oc
         )
+        if row:
+            cache[key] = (
+                str(row[0]) if row[0] is not None else None,
+                int(row[1]) if row[1] is not None else None,
+            )
+        else:
+            cache[key] = (None, None)
     return cache[key]
 
 
@@ -379,7 +397,7 @@ async def _process_note_batch(
     oc: dict,
     store_sid_cache: dict,
     sbs_sid_cache: dict,
-    item_sid_cache: dict,
+    item_info_cache: dict,
     item_qty_cache: dict,
     adj_reason_sid: Optional[str] = None,
 ) -> dict:
@@ -428,6 +446,53 @@ async def _process_note_batch(
     if not sbs_sid:
         logger.warning("[QtyAdj] No sbs SID found (sbs_no=1) for note='%s'", note)
 
+    # ── Pre-flight: validate every item before any API call ──────────────────
+    preflight_items: list[dict] = []
+    preflight_has_error = False
+
+    for row in rows:
+        upc = row.get("SCANUPC", "").strip()
+        try:
+            csv_delta = int(float(row.get("ADJQUANTITY", "0") or "0"))
+        except (ValueError, TypeError):
+            csv_delta = 0
+
+        try:
+            item_sid, item_active = await _get_item_info(upc, item_info_cache, oc)
+        except Exception as _exc:
+            item_sid, item_active = None, None
+            logger.warning("[QtyAdj] Oracle item lookup failed upc=%s: %s", upc, _exc)
+
+        if item_sid is None:
+            item_err = "Item not found in Oracle"
+            preflight_has_error = True
+        elif item_active == 0:
+            item_err = "Item is inactive"
+            preflight_has_error = True
+        else:
+            item_err = None
+
+        preflight_items.append({
+            "upc":         upc,
+            "csv_delta":   csv_delta,
+            "current_qty": 0,
+            "adj_value":   0,
+            "item_sid":    item_sid,
+            "active":      item_active,
+            "ok":          False,
+            "error":       item_err,
+        })
+
+    if preflight_has_error:
+        doc_data["items_data"]    = preflight_items
+        doc_data["error_count"]   = len(preflight_items)
+        doc_data["error_message"] = (
+            "One or more items in this group are not found or inactive in Oracle. "
+            "Group was not processed — see item details for per-item errors."
+        )
+        await _persist_adj_doc(doc_data)
+        return doc_data
+
     try:
         # ── Step 1: Create adjustment document ───────────────────────────────
         adj_sid, create_payload, create_resp = await _create_adjustment_doc(
@@ -445,7 +510,8 @@ async def _process_note_batch(
 
         doc_data["adj_sid"] = adj_sid
 
-        # ── Step 2: Resolve item SIDs ─────────────────────────────────────────
+        # ── Step 2: Resolve item SIDs and compute adj values ─────────────────
+        # (all items already validated in pre-flight; these are cache hits)
         items_for_api: list[dict] = []
         items_detail: list[dict] = []
 
@@ -456,16 +522,8 @@ async def _process_note_batch(
             except (ValueError, TypeError):
                 csv_delta = 0
 
-            # Resolve item SID — catch per-item so one bad UPC doesn't abort the batch
-            try:
-                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
-                item_err = None if item_sid else "Item SID not found in Oracle"
-            except Exception as sid_exc:
-                item_sid = None
-                item_err = f"Oracle SID error: {sid_exc}"
-                logger.warning("[QtyAdj] Oracle SID lookup failed upc=%s: %s", upc, sid_exc)
+            item_sid, _ = await _get_item_info(upc, item_info_cache, oc)
 
-            # Resolve current qty and calculate target value
             current_qty = 0
             if item_sid and sbs_sid and store_sid:
                 try:
@@ -477,36 +535,26 @@ async def _process_note_batch(
                         "[QtyAdj] Oracle qty lookup failed upc=%s item_sid=%s: %s",
                         upc, item_sid, qty_exc,
                     )
-                    if not item_err:
-                        item_err = f"Oracle qty error: {qty_exc}"
 
             adj_value = current_qty + csv_delta
 
             item_detail = {
-                "upc": upc,
-                "csv_delta": csv_delta,
+                "upc":         upc,
+                "csv_delta":   csv_delta,
                 "current_qty": current_qty,
-                "adj_value": adj_value,
-                "item_sid": item_sid,
-                "ok": False,
-                "error": item_err,
+                "adj_value":   adj_value,
+                "item_sid":    item_sid,
+                "ok":          False,
+                "error":       None,
             }
             items_detail.append(item_detail)
-
-            if item_sid:
-                items_for_api.append({
-                    "item_sid": item_sid,
-                    "adj_value": adj_value,
-                    "upc": upc,
-                })
+            items_for_api.append({
+                "item_sid": item_sid,
+                "adj_value": adj_value,
+                "upc": upc,
+            })
 
         doc_data["items_data"] = items_detail
-
-        if not items_for_api:
-            doc_data["error_message"] = "No item SIDs resolved — all UPCs missing from Oracle"
-            doc_data["error_count"] = len(rows)
-            await _persist_adj_doc(doc_data)
-            return doc_data
 
         # ── Step 3: Post adj items ────────────────────────────────────────────
         items_payload, items_resp, items_status = await _post_adj_items(
@@ -672,7 +720,7 @@ async def process_qty_adjustment_csv(
 
     store_sid_cache: dict = {}
     sbs_sid_cache: dict = {}
-    item_sid_cache: dict = {}
+    item_info_cache: dict = {}
     item_qty_cache: dict = {}
 
     adj_reason_sid = await _get_adj_reason_sid(oc)
@@ -702,7 +750,7 @@ async def process_qty_adjustment_csv(
                     oc=oc,
                     store_sid_cache=store_sid_cache,
                     sbs_sid_cache=sbs_sid_cache,
-                    item_sid_cache=item_sid_cache,
+                    item_info_cache=item_info_cache,
                     item_qty_cache=item_qty_cache,
                     adj_reason_sid=adj_reason_sid,
                 )

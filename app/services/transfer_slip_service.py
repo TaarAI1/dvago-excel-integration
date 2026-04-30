@@ -33,6 +33,27 @@ from app.core.timezone import now_pkt
 
 logger = logging.getLogger(__name__)
 
+# ── In-memory cancel state ─────────────────────────────────────────────────────
+_active_import_id: Optional[str] = None
+_cancel_requests: set = set()
+
+
+def get_active_import_id() -> Optional[str]:
+    return _active_import_id
+
+
+def request_cancel_import() -> bool:
+    global _active_import_id
+    if not _active_import_id:
+        return False
+    _cancel_requests.add(_active_import_id)
+    logger.info("Cancel requested for Transfer Slip import %s", _active_import_id)
+    return True
+
+
+def _is_cancelled(import_id: str) -> bool:
+    return import_id in _cancel_requests
+
 
 # ── CSV parsing ───────────────────────────────────────────────────────────────
 
@@ -118,13 +139,20 @@ async def _get_store_sids(
     return cache[key]
 
 
-async def _get_item_sid(upc: str, cache: dict, oc: dict) -> Optional[str]:
+async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
+    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found."""
     key = str(upc).strip()
     if key not in cache:
         row = await _oracle_row(
-            f"SELECT sid FROM rps.invn_sbs_item WHERE upc = '{key}'", oc
+            f"SELECT sid, active FROM rps.invn_sbs_item WHERE upc = '{key}'", oc
         )
-        cache[key] = str(row[0]) if row and row[0] else None
+        if row:
+            cache[key] = (
+                str(row[0]) if row[0] is not None else None,
+                int(row[1]) if row[1] is not None else None,
+            )
+        else:
+            cache[key] = (None, None)
     return cache[key]
 
 
@@ -341,7 +369,7 @@ async def _process_note_group(
     http: httpx.AsyncClient,
     oc: dict,
     store_sids_cache: dict,
-    item_sid_cache: dict,
+    item_info_cache: dict,
 ) -> dict:
     """
     Process all rows for a single note group (one transfer slip document).
@@ -395,6 +423,51 @@ async def _process_note_group(
             await _persist_slip_doc(doc_data)
             return doc_data
 
+        # ── Pre-flight: validate every item before any API call ───────────────
+        preflight_items: list[dict] = []
+        preflight_has_error = False
+
+        for row in rows:
+            upc = row.get("UPC", "").strip()
+            try:
+                qty = int(float(row.get("TOTALTRANSFERQTY", "0") or "0"))
+            except (ValueError, TypeError):
+                qty = 0
+
+            try:
+                item_sid, item_active = await _get_item_info(upc, item_info_cache, oc)
+            except Exception as _exc:
+                item_sid, item_active = None, None
+                logger.warning("[TransferSlip] Oracle item lookup failed upc=%s: %s", upc, _exc)
+
+            if item_sid is None:
+                item_err = "Item not found in Oracle"
+                preflight_has_error = True
+            elif item_active == 0:
+                item_err = "Item is inactive"
+                preflight_has_error = True
+            else:
+                item_err = None
+
+            preflight_items.append({
+                "upc":      upc,
+                "qty":      qty,
+                "item_sid": item_sid,
+                "active":   item_active,
+                "ok":       False,
+                "error":    item_err,
+            })
+
+        if preflight_has_error:
+            doc_data["items_data"]    = preflight_items
+            doc_data["error_count"]   = len(preflight_items)
+            doc_data["error_message"] = (
+                "One or more items in this group are not found or inactive in Oracle. "
+                "Group was not processed — see item details for per-item errors."
+            )
+            await _persist_slip_doc(doc_data)
+            return doc_data
+
         # ── Step 3: Create transfer slip document ─────────────────────────────
         slip_sid, create_payload, create_resp = await _create_transfer_slip(
             http, base_url, auth_session,
@@ -412,7 +485,8 @@ async def _process_note_group(
 
         doc_data["slip_sid"] = slip_sid
 
-        # ── Step 4: Resolve item SIDs and build items list ────────────────────
+        # ── Step 4: Build items list (all already validated via pre-flight) ──────
+        # Cache hits only — no Oracle round-trips here.
         items_for_api: list[dict] = []
         items_detail:  list[dict] = []
 
@@ -423,26 +497,18 @@ async def _process_note_group(
             except (ValueError, TypeError):
                 qty = 0
 
-            item_sid = await _get_item_sid(upc, item_sid_cache, oc)
-            item_detail = {
+            item_sid, _ = await _get_item_info(upc, item_info_cache, oc)
+
+            items_detail.append({
                 "upc":      upc,
                 "qty":      qty,
                 "item_sid": item_sid,
                 "ok":       False,
-                "error":    None if item_sid else "Item SID not found in Oracle",
-            }
-            items_detail.append(item_detail)
-
-            if item_sid:
-                items_for_api.append({"item_sid": item_sid, "qty": qty, "upc": upc})
+                "error":    None,
+            })
+            items_for_api.append({"item_sid": item_sid, "qty": qty, "upc": upc})
 
         doc_data["items_data"] = items_detail
-
-        if not items_for_api:
-            doc_data["error_message"] = "No item SIDs resolved — all UPCs missing from Oracle"
-            doc_data["error_count"]   = len(rows)
-            await _persist_slip_doc(doc_data)
-            return doc_data
 
         # ── Step 5: Post slip items ───────────────────────────────────────────
         items_payload, items_resp = await _post_slip_items(
@@ -534,8 +600,11 @@ async def process_transfer_slip_csv(
 ) -> dict:
     """
     Full pipeline: parse CSV → group by note → process each note group.
+    Supports cooperative cancellation via request_cancel_import().
     Returns a summary dict.
     """
+    global _active_import_id, _cancel_requests
+
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
@@ -543,8 +612,14 @@ async def process_transfer_slip_csv(
     if not rows:
         return {
             "ok": False,
+            "cancelled": False,
             "error": "No data rows found (all rows missing UPC or NOTE).",
-            "docs": [],
+            "total_docs": 0,
+            "posted_docs": 0,
+            "partial_docs": 0,
+            "error_docs": 0,
+            "total_items": 0,
+            "posted_items": 0,
         }
 
     oc = {
@@ -566,12 +641,21 @@ async def process_transfer_slip_csv(
         note_groups.setdefault(note, []).append(row)
 
     store_sids_cache: dict = {}
-    item_sid_cache:   dict = {}
+    item_info_cache:  dict = {}
     all_docs: list[dict]   = []
+
+    import_id = str(_uuid.uuid4())
+    _active_import_id = import_id
+    cancelled = False
 
     try:
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
+                if _is_cancelled(import_id):
+                    cancelled = True
+                    logger.info("[TransferSlip] Import %s cancelled after note=%s", import_id, note)
+                    break
+
                 if await _note_already_processed(note):
                     logger.warning("Skipping duplicate note: %s", note)
                     dup_doc: dict = {
@@ -598,10 +682,12 @@ async def process_transfer_slip_csv(
                     http=http,
                     oc=oc,
                     store_sids_cache=store_sids_cache,
-                    item_sid_cache=item_sid_cache,
+                    item_info_cache=item_info_cache,
                 )
                 all_docs.append(doc)
     finally:
+        _active_import_id = None
+        _cancel_requests.discard(import_id)
         await stand_session(base_url, auth_session)
 
     total_docs   = len(all_docs)
@@ -613,6 +699,7 @@ async def process_transfer_slip_csv(
 
     return {
         "ok":           True,
+        "cancelled":    cancelled,
         "total_rows":   len(rows),
         "total_docs":   total_docs,
         "posted_docs":  posted_docs,

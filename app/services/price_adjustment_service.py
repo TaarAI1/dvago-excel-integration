@@ -136,12 +136,30 @@ async def _get_price_lvl_sid(price_lvl: int, cache: dict, oc: dict) -> Optional[
     return cache[key]
 
 
-async def _get_item_sid(upc: str, cache: dict, oc: dict) -> Optional[str]:
+async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
+    from app.services.oracle_service import run_query
+    df = await run_query(
+        oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+    )
+    if df is None or df.is_empty():
+        return None
+    return df.row(0)
+
+
+async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
+    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found."""
     key = str(upc).strip()
     if key not in cache:
-        cache[key] = await _oracle_scalar(
-            f"SELECT sid FROM rps.invn_Sbs_item WHERE upc = '{key}'", oc
+        row = await _oracle_row(
+            f"SELECT sid, active FROM rps.invn_Sbs_item WHERE upc = '{key}'", oc
         )
+        if row:
+            cache[key] = (
+                str(row[0]) if row[0] is not None else None,
+                int(row[1]) if row[1] is not None else None,
+            )
+        else:
+            cache[key] = (None, None)
     return cache[key]
 
 
@@ -387,7 +405,7 @@ async def _process_note_batch(
     store_sid_cache: dict,
     sbs_sid_cache: dict,
     price_lvl_sid_cache: dict,
-    item_sid_cache: dict,
+    item_info_cache: dict,
     adj_reason_sid: Optional[str] = None,
 ) -> dict:
     """Process all rows for a single NOTE as one adjustment document."""
@@ -442,6 +460,48 @@ async def _process_note_batch(
         await _persist_price_adj_doc(doc_data)
         return doc_data
 
+    # ── Pre-flight: validate every item before any API call ──────────────────
+    preflight_items: list[dict] = []
+    preflight_has_error = False
+
+    for row in rows:
+        upc = row.get("SCANUPC", "").strip()
+        adj_value = _parse_adjvalue(row.get("ADJVALUE", "0") or "0")
+
+        try:
+            item_sid, item_active = await _get_item_info(upc, item_info_cache, oc)
+        except Exception as _exc:
+            item_sid, item_active = None, None
+            logger.warning("[PriceAdj] Oracle item lookup failed upc=%s: %s", upc, _exc)
+
+        if item_sid is None:
+            item_err = "Item not found in Oracle"
+            preflight_has_error = True
+        elif item_active == 0:
+            item_err = "Item is inactive"
+            preflight_has_error = True
+        else:
+            item_err = None
+
+        preflight_items.append({
+            "upc":       upc,
+            "adj_value": adj_value,
+            "item_sid":  item_sid,
+            "active":    item_active,
+            "ok":        False,
+            "error":     item_err,
+        })
+
+    if preflight_has_error:
+        doc_data["items_data"]    = preflight_items
+        doc_data["error_count"]   = len(preflight_items)
+        doc_data["error_message"] = (
+            "One or more items in this group are not found or inactive in Oracle. "
+            "Group was not processed — see item details for per-item errors."
+        )
+        await _persist_price_adj_doc(doc_data)
+        return doc_data
+
     try:
         # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
         adj_sid, create_payload, create_resp = await _create_price_adjustment_doc(
@@ -477,6 +537,7 @@ async def _process_note_batch(
         doc_data["adj_sid"] = adj_sid
 
         # Step 2: Resolve item SIDs from Oracle
+        # (all items already validated in pre-flight; these are cache hits)
         items_for_api: list[dict] = []
         items_detail.clear()
 
@@ -484,42 +545,23 @@ async def _process_note_batch(
             upc = row.get("SCANUPC", "").strip()
             adj_value = _parse_adjvalue(row.get("ADJVALUE", "0") or "0")
 
-            try:
-                item_sid = await _get_item_sid(upc, item_sid_cache, oc)
-                item_err = None if item_sid else "Item SID not found in Oracle"
-            except Exception as oracle_exc:
-                item_sid = None
-                item_err = f"Oracle error: {oracle_exc}"
-                logger.warning("[PriceAdj] Oracle SID lookup failed upc=%s: %s", upc, oracle_exc)
+            item_sid, _ = await _get_item_info(upc, item_info_cache, oc)
 
             item_detail = {
-                "upc": upc,
+                "upc":       upc,
                 "adj_value": adj_value,
-                "item_sid": item_sid,
-                "ok": False,
-                "error": item_err,
+                "item_sid":  item_sid,
+                "ok":        False,
+                "error":     None,
             }
             items_detail.append(item_detail)
-
-            if item_sid:
-                items_for_api.append({
-                    "item_sid": item_sid,
-                    "adj_value": adj_value,
-                    "upc": upc,
-                })
+            items_for_api.append({
+                "item_sid": item_sid,
+                "adj_value": adj_value,
+                "upc": upc,
+            })
 
         doc_data["items_data"] = items_detail
-
-        if not items_for_api:
-            oracle_errors = [it["error"] for it in items_detail if it.get("error")]
-            first_err = oracle_errors[0] if oracle_errors else "unknown"
-            doc_data["error_message"] = (
-                f"[Step 2 failed] No item SIDs resolved for any of the {len(rows)} UPCs. "
-                f"First error: {first_err}"
-            )
-            doc_data["error_count"] = len(rows)
-            await _persist_price_adj_doc(doc_data)
-            return doc_data
 
         # Step 3: Post adj items (price values)
         items_payload, items_resp, items_status = await _post_price_adj_items(
@@ -704,7 +746,7 @@ async def process_price_adjustment_csv(
     store_sid_cache: dict = {}
     sbs_sid_cache: dict = {}
     price_lvl_sid_cache: dict = {}
-    item_sid_cache: dict = {}
+    item_info_cache: dict = {}
 
     adj_reason_sid = await _get_adj_reason_sid(oc)
     if not adj_reason_sid:
@@ -736,7 +778,7 @@ async def process_price_adjustment_csv(
                     store_sid_cache=store_sid_cache,
                     sbs_sid_cache=sbs_sid_cache,
                     price_lvl_sid_cache=price_lvl_sid_cache,
-                    item_sid_cache=item_sid_cache,
+                    item_info_cache=item_info_cache,
                     adj_reason_sid=adj_reason_sid,
                 )
                 all_docs.append(doc)
