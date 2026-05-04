@@ -187,6 +187,8 @@ async def _create_transfer_slip(
             "outsbssid": outsbssid,
             "instoresid": instoresid,
             "outstoresid": outstoresid,
+            "Verified": True,
+            "VerifyType": 1,
         }]
     }
     resp = await http.post(

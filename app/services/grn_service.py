@@ -198,6 +198,7 @@ async def _create_grn_doc(
             "publishstatus": 1,
             "voutype": 0,
             "vouclass": 0,
+            "Verified": True,
         }]
     }
     resp = await http.post(
