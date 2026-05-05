@@ -648,6 +648,33 @@ async def _process_note_group(
     return all_docs
 
 
+# ── Duplicate-note guard ───────────────────────────────────────────────────────
+
+async def _note_already_processed_in_retailpro(note: str, oc: dict) -> bool:
+    """
+    Return True if *note* already exists as a finalised voucher comment in RetailPro.
+
+    Checks Oracle directly:
+        SELECT vc.comments
+        FROM rps.vou_comment vc
+        JOIN rps.voucher v ON v.sid = vc.vou_sid
+        WHERE vc.comments = '{note}'
+        AND v.status = 4;
+
+    A result means the GRN was already completed (status 4); skip re-processing.
+    No result means it is safe to process.
+    """
+    sql = (
+        "SELECT vc.comments "
+        "FROM rps.vou_comment vc "
+        "JOIN rps.voucher v ON v.sid = vc.vou_sid "
+        f"WHERE vc.comments = '{note}' "
+        "AND v.status = 4"
+    )
+    row = await _oracle_row(sql, oc)
+    return row is not None
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 async def process_grn_csv(
@@ -696,20 +723,6 @@ async def process_grn_csv(
         note = row.get("NOTE", "").strip()
         note_groups.setdefault(note, []).append(row)
 
-    # Load all notes that were successfully processed in any previous batch so we
-    # can reject duplicates before making any API calls.
-    from app.db.postgres import get_session
-    from app.models.grn_doc import GRNDoc
-    from sqlalchemy import select
-    async with get_session() as _sess:
-        _result = await _sess.execute(
-            select(GRNDoc.note).where(
-                GRNDoc.note.in_(list(note_groups.keys())),
-                GRNDoc.status.in_(["posted", "partial"]),
-            )
-        )
-        already_processed_notes: set[str] = {r[0] for r in _result.all() if r[0]}
-
     store_cache:     dict = {}
     vendor_cache:    dict = {}
     item_info_cache: dict = {}
@@ -727,8 +740,8 @@ async def process_grn_csv(
                     logger.info("[GRN] Import %s cancelled after note=%s", import_id, note)
                     break
 
-                # Reject notes that were successfully processed in a previous batch.
-                if note in already_processed_notes:
+                # Reject notes that are already finalised in RetailPro (Oracle).
+                if await _note_already_processed_in_retailpro(note, oc):
                     store_code = note_rows[0].get("STORE_CODE", "").strip()
                     store_name = note_rows[0].get("STORE_NAME", "").strip()
                     dup_doc = {
@@ -745,12 +758,12 @@ async def process_grn_csv(
                         "error_count": len(note_rows),
                         "status": "error",
                         "error_message": (
-                            f"Note '{note}' has already been processed in a previous batch. "
+                            f"Note '{note}' has already been processed in RetailPro. "
                             f"Skipping to avoid duplicate GRN."
                         ),
                         "items_data": [],
                     }
-                    logger.warning("[GRN] Skipping note='%s' — already processed in a previous batch.", note)
+                    logger.warning("[GRN] Skipping note='%s' — already finalised in RetailPro.", note)
                     await _persist_grn_doc(dup_doc)
                     all_docs.append(dup_doc)
                     continue

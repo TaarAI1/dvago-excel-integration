@@ -6,19 +6,24 @@ Processing pipeline (per note-group):
   2. Skip rows missing upc or note
   3. Group rows by note field
   4. For each note-group:
-     a. Resolve In Store SIDs from Oracle:
+     a. Check if note is already processed in RetailPro (Oracle):
+           SELECT sc.comments FROM rps.slip_comment sc
+           LEFT JOIN rps.slip s ON s.sid = sc.slip_sid
+           WHERE sc.comments = '{note}' AND s.status = 4
+           → if a row is returned, skip this note-group (already completed)
+     b. Resolve In Store SIDs from Oracle:
            SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{in_store_name}'
            → instoresid (sid), insbssid (sbs_sid)
-     b. Resolve Out Store SIDs from Oracle:
+     c. Resolve Out Store SIDs from Oracle:
            SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{out_store_name}'
            → outstoresid (sid), outsbssid (sbs_sid)
-     c. POST /api/backoffice/transferslip            → slip_sid
-     d. Resolve each item SID from Oracle:
+     d. POST /api/backoffice/transferslip            → slip_sid
+     e. Resolve each item SID from Oracle:
            SELECT sid FROM rps.invn_sbs_item WHERE upc = '{upc}'
-     e. POST /api/backoffice/transferslip/{slip_sid}/slipitem
-     f. POST /api/backoffice/slipcomment?comments={note}&slipsid={slip_sid}
-     g. GET  /api/backoffice/transferslip?filter=(sid,eq,{slip_sid})  → rowversion
-     h. PUT  /api/backoffice/transferslip/{slip_sid}  → status 4
+     f. POST /api/backoffice/transferslip/{slip_sid}/slipitem
+     g. POST /api/backoffice/slipcomment?comments={note}&slipsid={slip_sid}
+     h. GET  /api/backoffice/transferslip?filter=(sid,eq,{slip_sid})  → rowversion
+     i. PUT  /api/backoffice/transferslip/{slip_sid}  → status 4
   5. Persist each transfer slip document to transfer_slip_docs table
 """
 import csv
@@ -580,17 +585,29 @@ async def _process_note_group(
 
 # ── Duplicate-note guard ──────────────────────────────────────────────────────
 
-async def _note_already_processed(note: str) -> bool:
-    """Return True if *note* exists in transfer_slip_docs (any previous batch)."""
-    from app.db.postgres import get_session
-    from app.models.transfer_slip_doc import TransferSlipDoc
-    from sqlalchemy import select
+async def _note_already_processed(note: str, oc: dict) -> bool:
+    """
+    Return True if *note* already exists as a finalised slip comment in RetailPro.
 
-    async with get_session() as session:
-        result = await session.execute(
-            select(TransferSlipDoc.id).where(TransferSlipDoc.note == note).limit(1)
-        )
-        return result.first() is not None
+    Checks Oracle directly:
+        SELECT sc.comments
+        FROM rps.slip_comment sc
+        LEFT JOIN rps.slip s ON s.sid = sc.slip_sid
+        WHERE sc.comments = '{note}'
+        AND s.status = 4;
+
+    A result means the slip was already completed (status 4); skip re-processing.
+    No result means it is safe to process.
+    """
+    sql = (
+        "SELECT sc.comments "
+        "FROM rps.slip_comment sc "
+        "LEFT JOIN rps.slip s ON s.sid = sc.slip_sid "
+        f"WHERE sc.comments = '{note}' "
+        "AND s.status = 4"
+    )
+    row = await _oracle_row(sql, oc)
+    return row is not None
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -657,7 +674,7 @@ async def process_transfer_slip_csv(
                     logger.info("[TransferSlip] Import %s cancelled after note=%s", import_id, note)
                     break
 
-                if await _note_already_processed(note):
+                if await _note_already_processed(note, oc):
                     logger.warning("Skipping duplicate note: %s", note)
                     dup_doc: dict = {
                         "source_file":  source_file,
