@@ -1717,6 +1717,9 @@ interface TransferSlipDoc {
   api_get_response: unknown
   api_finalize_payload: unknown
   api_finalize_response: unknown
+  api_verify_get_response: unknown
+  api_verify_payload: unknown
+  api_verify_response: unknown
   items_data: Array<{ upc: string; qty: number; item_sid: string | null; ok: boolean; error: string | null }> | null
   created_at: string
   posted_at: string | null
