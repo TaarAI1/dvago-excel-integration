@@ -16,7 +16,7 @@ Processing pipeline (per note-group, up to 900 items per voucher):
             → vousid
       d. GET  /api/backoffice/receiving?filter=(sid,eq,{vousid})
             → rowversion
-      e. POST /api/backoffice/receiving/{vousid}           (set vendor)
+      e. PUT  /api/backoffice/receiving/{vousid}           (set vendor)
             payload: {"data":[{"rowversion":…,"vendsid":"…"}]}
       f. Resolve each item SID:
             SELECT sid FROM rps.invn_sbs_item WHERE upc = '{upc}'
@@ -250,11 +250,11 @@ async def _update_grn_vendor(
     vendsid: str,
 ) -> tuple[dict, dict]:
     """
-    POST /api/backoffice/receiving/{vousid}   (set vendor + rowversion)
+    PUT /api/backoffice/receiving/{vousid}   (set vendor + rowversion)
     Returns (payload_sent, response_json).
     """
     payload = {"data": [{"rowversion": rowversion, "vendsid": vendsid}]}
-    resp = await http.post(
+    resp = await http.put(
         f"{base_url}/api/backoffice/receiving/{vousid}",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -552,7 +552,7 @@ async def _process_note_group(
             vousid, create_payload, create_resp = await _create_grn_doc(
                 http, base_url, auth_session, storesid, sbssid or ""
             )
-            doc_data["api_create_payload"]  = create_payload
+            doc_data["api_create_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving", **create_payload}
             doc_data["api_create_response"] = create_resp
 
             if not vousid:
@@ -566,7 +566,7 @@ async def _process_note_group(
 
             # Step 2: Get rowversion
             rowversion, get_resp = await _get_grn_rowversion(http, base_url, auth_session, vousid)
-            doc_data["api_get_rowversion_response"] = get_resp
+            doc_data["api_get_rowversion_response"] = {"_url": f"GET {base_url}/api/backoffice/receiving?filter=(sid,eq,{vousid})", **get_resp}
 
             if rowversion is None:
                 doc_data["error_message"] = f"Could not get rowversion: {get_resp}"
@@ -579,26 +579,26 @@ async def _process_note_group(
             vendor_payload, vendor_resp = await _update_grn_vendor(
                 http, base_url, auth_session, vousid, rowversion, vendsid
             )
-            doc_data["api_vendor_payload"]  = vendor_payload
+            doc_data["api_vendor_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/receiving/{vousid}", **vendor_payload}
             doc_data["api_vendor_response"] = vendor_resp
 
             # Step 4: Post items
             items_payload, items_resp = await _post_grn_items(
                 http, base_url, auth_session, vousid, chunk
             )
-            doc_data["api_items_payload"]  = items_payload
+            doc_data["api_items_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving/{vousid}/recvitem", **items_payload}
             doc_data["api_items_response"] = items_resp
 
             # Step 5: Post comment
             comment_payload, comment_resp = await _post_grn_comment(
                 http, base_url, auth_session, vousid, note
             )
-            doc_data["api_comment_payload"]  = comment_payload
+            doc_data["api_comment_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving/{vousid}/recvcomment?comments={note}", **comment_payload}
             doc_data["api_comment_response"] = comment_resp
 
             # Step 6: Get updated rowversion
             rowversion2, get_resp2 = await _get_grn_rowversion(http, base_url, auth_session, vousid)
-            doc_data["api_get_rowversion2_response"] = get_resp2
+            doc_data["api_get_rowversion2_response"] = {"_url": f"GET {base_url}/api/backoffice/receiving?filter=(sid,eq,{vousid})", **get_resp2}
 
             if rowversion2 is None:
                 doc_data["error_message"] = f"Could not get updated rowversion: {get_resp2}"
@@ -611,7 +611,7 @@ async def _process_note_group(
             fin_payload, fin_resp = await _finalize_grn(
                 http, base_url, auth_session, vousid, rowversion2
             )
-            doc_data["api_finalize_payload"]  = fin_payload
+            doc_data["api_finalize_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/receiving/{vousid}", **fin_payload}
             doc_data["api_finalize_response"] = fin_resp
 
             # Mark chunk items as ok

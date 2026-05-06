@@ -518,7 +518,7 @@ async def _process_note_group(
             instoresid, insbssid or "",
             outstoresid, outsbssid or "",
         )
-        doc_data["api_create_payload"]  = create_payload
+        doc_data["api_create_payload"]  = {"_url": f"POST {base_url}/api/backoffice/transferslip", **create_payload}
         doc_data["api_create_response"] = create_resp
 
         if not slip_sid:
@@ -558,21 +558,21 @@ async def _process_note_group(
         items_payload, items_resp = await _post_slip_items(
             http, base_url, auth_session, slip_sid, items_for_api
         )
-        doc_data["api_items_payload"]  = items_payload
+        doc_data["api_items_payload"]  = {"_url": f"POST {base_url}/api/backoffice/transferslip/{slip_sid}/slipitem", **items_payload}
         doc_data["api_items_response"] = items_resp
 
         # ── Step 6: Post comment (note) ───────────────────────────────────────
         comment_payload, comment_resp = await _post_slip_comment(
             http, base_url, auth_session, slip_sid, note
         )
-        doc_data["api_comment_payload"]  = comment_payload
+        doc_data["api_comment_payload"]  = {"_url": f"POST {base_url}/api/backoffice/slipcomment?comments={note}&slipsid={slip_sid}", **comment_payload}
         doc_data["api_comment_response"] = comment_resp
 
         # ── Step 7: Get rowversion ────────────────────────────────────────────
         rowversion, get_resp = await _get_slip_rowversion(
             http, base_url, auth_session, slip_sid
         )
-        doc_data["api_get_response"] = get_resp
+        doc_data["api_get_response"] = {"_url": f"GET {base_url}/api/backoffice/transferslip?filter=(sid,eq,{slip_sid})", **get_resp}
 
         if rowversion is None:
             doc_data["error_message"] = (
@@ -586,14 +586,14 @@ async def _process_note_group(
         fin_payload, fin_resp = await _finalize_slip(
             http, base_url, auth_session, slip_sid, rowversion
         )
-        doc_data["api_finalize_payload"]  = fin_payload
+        doc_data["api_finalize_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **fin_payload}
         doc_data["api_finalize_response"] = fin_resp
 
         # ── Step 9: Re-fetch updated rowversion after finalize ────────────────
         verify_rowversion, verify_get_resp = await _get_slip_rowversion(
             http, base_url, auth_session, slip_sid
         )
-        doc_data["api_verify_get_response"] = verify_get_resp
+        doc_data["api_verify_get_response"] = {"_url": f"GET {base_url}/api/backoffice/transferslip?filter=(sid,eq,{slip_sid})", **verify_get_resp}
 
         if verify_rowversion is None:
             doc_data["error_message"] = (
@@ -607,7 +607,7 @@ async def _process_note_group(
         verify_payload, verify_resp = await _verify_slip(
             http, base_url, auth_session, slip_sid, verify_rowversion
         )
-        doc_data["api_verify_payload"]  = verify_payload
+        doc_data["api_verify_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **verify_payload}
         doc_data["api_verify_response"] = verify_resp
 
         # Mark items that were resolved as ok
