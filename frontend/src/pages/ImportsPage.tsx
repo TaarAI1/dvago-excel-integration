@@ -1855,6 +1855,9 @@ function TransferSlipDetailDialog({ doc, onClose }: { doc: TransferSlipDoc | nul
         {section('4. GET Rowversion — Response', doc.api_get_response)}
         {section('5. Finalize — Request',        doc.api_finalize_payload)}
         {section('5. Finalize — Response',       doc.api_finalize_response)}
+        {section('6. GET Updated Rowversion — Response', doc.api_verify_get_response)}
+        {section('7. Verify — Request',          doc.api_verify_payload)}
+        {section('7. Verify — Response',         doc.api_verify_response)}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>

@@ -35,6 +35,9 @@ class TransferSlipDoc(Base):
     api_get_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     api_finalize_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     api_finalize_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    api_verify_get_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    api_verify_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    api_verify_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Per-item detail: [{upc, qty, item_sid, ok, error}]
     items_data: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -69,6 +72,9 @@ def transfer_slip_doc_to_response(doc: TransferSlipDoc) -> dict:
         "api_get_response": doc.api_get_response,
         "api_finalize_payload": doc.api_finalize_payload,
         "api_finalize_response": doc.api_finalize_response,
+        "api_verify_get_response": doc.api_verify_get_response,
+        "api_verify_payload": doc.api_verify_payload,
+        "api_verify_response": doc.api_verify_response,
         "items_data": doc.items_data,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "posted_at": doc.posted_at.isoformat() if doc.posted_at else None,

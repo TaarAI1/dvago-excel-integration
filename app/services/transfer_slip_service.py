@@ -24,6 +24,8 @@ Processing pipeline (per note-group):
      g. POST /api/backoffice/slipcomment?comments={note}&slipsid={slip_sid}
      h. GET  /api/backoffice/transferslip?filter=(sid,eq,{slip_sid})  → rowversion
      i. PUT  /api/backoffice/transferslip/{slip_sid}  → status 4
+     j. GET  /api/backoffice/transferslip?filter=(sid,eq,{slip_sid})  → updated rowversion
+     k. PUT  /api/backoffice/transferslip/{slip_sid}  → Unverified 0, Verified 1, verifydate
   5. Persist each transfer slip document to transfer_slip_docs table
 """
 import csv
@@ -325,6 +327,39 @@ async def _finalize_slip(
     return payload, resp_json
 
 
+async def _verify_slip(
+    http: httpx.AsyncClient,
+    base_url: str,
+    auth_session: str,
+    slip_sid: str,
+    rowversion: int,
+) -> tuple[dict, dict]:
+    """
+    PUT /api/backoffice/transferslip/{slip_sid}
+    Marks the slip as verified: Unverified=0, Verified=1, verifydate=now.
+    Returns (payload_sent, response_json).
+    """
+    verifydate = now_pkt().strftime("%Y-%m-%d %H:%M:%S")
+    payload = {
+        "data": [{
+            "rowversion": rowversion,
+            "Unverified": 0,
+            "Verified": 1,
+            "verifydate": verifydate,
+        }]
+    }
+    resp = await http.put(
+        f"{base_url}/api/backoffice/transferslip/{slip_sid}",
+        json=payload,
+        headers=_rp_headers(auth_session),
+    )
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"raw": resp.text}
+    return payload, resp_json
+
+
 # ── DB persistence ────────────────────────────────────────────────────────────
 
 async def _persist_slip_doc(doc_data: dict) -> None:
@@ -358,6 +393,9 @@ async def _persist_slip_doc(doc_data: dict) -> None:
                 api_get_response=doc_data.get("api_get_response"),
                 api_finalize_payload=doc_data.get("api_finalize_payload"),
                 api_finalize_response=doc_data.get("api_finalize_response"),
+                api_verify_get_response=doc_data.get("api_verify_get_response"),
+                api_verify_payload=doc_data.get("api_verify_payload"),
+                api_verify_response=doc_data.get("api_verify_response"),
                 items_data=doc_data.get("items_data"),
                 posted_at=now_pkt() if doc_data.get("status") == "posted" else None,
             )
@@ -550,6 +588,27 @@ async def _process_note_group(
         )
         doc_data["api_finalize_payload"]  = fin_payload
         doc_data["api_finalize_response"] = fin_resp
+
+        # ── Step 9: Re-fetch updated rowversion after finalize ────────────────
+        verify_rowversion, verify_get_resp = await _get_slip_rowversion(
+            http, base_url, auth_session, slip_sid
+        )
+        doc_data["api_verify_get_response"] = verify_get_resp
+
+        if verify_rowversion is None:
+            doc_data["error_message"] = (
+                f"Could not get updated rowversion for verify step: {verify_get_resp}"
+            )
+            doc_data["error_count"] = len(rows)
+            await _persist_slip_doc(doc_data)
+            return doc_data
+
+        # ── Step 10: Verify slip (Unverified=0, Verified=1) ──────────────────
+        verify_payload, verify_resp = await _verify_slip(
+            http, base_url, auth_session, slip_sid, verify_rowversion
+        )
+        doc_data["api_verify_payload"]  = verify_payload
+        doc_data["api_verify_response"] = verify_resp
 
         # Mark items that were resolved as ok
         for item in doc_data["items_data"]:
