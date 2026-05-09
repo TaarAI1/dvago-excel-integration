@@ -213,13 +213,17 @@ async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) 
                     cache[sc] = val
 
     # Oracle may return numeric store codes as "13" while the CSV input was "013".
+    # Only alias the key when we can confirm the match; leave it absent otherwise
+    # so _get_store_sids falls back to the individual Oracle query (never false (None,None)).
     for s in unknown:
         if s not in cache:
             try:
                 norm = str(int(float(s)))  # "013" → "13"
-                cache[s] = cache[norm] if norm in cache else (None, None)
+                if norm in cache:
+                    cache[s] = cache[norm]
+                # else: leave absent → _get_store_sids individual query handles it
             except (ValueError, TypeError):
-                cache[s] = (None, None)
+                pass  # non-numeric code → leave absent
 
 
 async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict) -> None:
@@ -245,13 +249,17 @@ async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict
                     cache[vk] = str(row["SID"]) if row.get("SID") else None
 
     # Oracle may return numeric vendor IDs as "123" while the CSV input was "0123".
+    # Only alias the key when we can confirm the match; leave it absent otherwise
+    # so _get_vendor_sid falls back to the individual Oracle query (never false None).
     for v in unknown:
         if v not in cache:
             try:
                 norm = str(int(float(v)))  # "0123" → "123"
-                cache[v] = cache[norm] if norm in cache else None
+                if norm in cache:
+                    cache[v] = cache[norm]
+                # else: leave absent → _get_vendor_sid individual query handles it
             except (ValueError, TypeError):
-                cache[v] = None
+                pass  # non-numeric vendor code → leave absent
 
 
 async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
