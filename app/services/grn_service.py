@@ -10,7 +10,7 @@ Processing pipeline (per note-group, up to 900 items per voucher):
             SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{store_code}'
             → storesid (sid), sbssid (sbs_sid)
       b. Oracle lookup for vendor:
-            SELECT sid FROM rps.vendor WHERE vend_id = {vendor_code}
+            SELECT sid FROM rps.vendor WHERE vend_code = '{vendor_code}'
             → vendsid
       c. POST /api/backoffice/receiving
             → vousid
@@ -163,7 +163,7 @@ async def _get_vendor_sid(vendor_code: str, cache: dict, oc: dict) -> Optional[s
     key = str(vendor_code).strip()
     if key not in cache:
         row = await _oracle_row(
-            f"SELECT sid FROM rps.vendor WHERE vend_id = {key}", oc
+            f"SELECT sid FROM rps.vendor WHERE vend_code = '{key}'", oc
         )
         cache[key] = str(row[0]) if row and row[0] else None
     return cache[key]
@@ -233,8 +233,8 @@ async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict
         return
     pool = oc.get("pool")
     for chunk in _chunks(unknown, _ORA_IN_LIMIT):
-        placeholders = ", ".join(str(v) for v in chunk)
-        sql = f"SELECT vend_id, sid FROM rps.vendor WHERE vend_id IN ({placeholders})"
+        placeholders = ", ".join(f"'{v}'" for v in chunk)
+        sql = f"SELECT vend_code, sid FROM rps.vendor WHERE vend_code IN ({placeholders})"
         if pool is not None:
             from app.services.oracle_service import run_query_with_pool
             df = await run_query_with_pool(pool, sql)
@@ -244,22 +244,13 @@ async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict
         if df is not None and not df.is_empty():
             df.columns = [c.upper() for c in df.columns]
             for row in df.iter_rows(named=True):
-                vk = str(row.get("VEND_ID") or "").strip()
+                vk = str(row.get("VEND_CODE") or "").strip()
                 if vk:
                     cache[vk] = str(row["SID"]) if row.get("SID") else None
 
-    # Oracle may return numeric vendor IDs as "123" while the CSV input was "0123".
-    # Only alias the key when we can confirm the match; leave it absent otherwise
-    # so _get_vendor_sid falls back to the individual Oracle query (never false None).
-    for v in unknown:
-        if v not in cache:
-            try:
-                norm = str(int(float(v)))  # "0123" → "123"
-                if norm in cache:
-                    cache[v] = cache[norm]
-                # else: leave absent → _get_vendor_sid individual query handles it
-            except (ValueError, TypeError):
-                pass  # non-numeric vendor code → leave absent
+    # vend_code is VARCHAR — exact string match; leave uncached keys absent so
+    # _get_vendor_sid falls back to the individual Oracle query.
+    # No numeric normalisation needed for string vendor codes.
 
 
 async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
