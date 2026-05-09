@@ -100,3 +100,57 @@ async def run_query(
     return await asyncio.to_thread(
         _run_query_sync, host, port, service_name, username, password, sql
     )
+
+
+# ── Connection pool support ───────────────────────────────────────────────────
+
+def _create_pool_sync(
+    host: str, port: int, service_name: str, username: str, password: str,
+    min_size: int = 1, max_size: int = 5,
+):
+    _ensure_thick_mode()
+    dsn = f"{host}:{port}/{service_name}"
+    return oracledb.create_pool(
+        user=username, password=password, dsn=dsn,
+        min=min_size, max=max_size, increment=1,
+    )
+
+
+async def create_oracle_pool(
+    host: str, port: int, service_name: str, username: str, password: str,
+    min_size: int = 1, max_size: int = 5,
+):
+    """Create a reusable oracledb connection pool for the duration of an import."""
+    return await asyncio.to_thread(
+        _create_pool_sync, host, port, service_name, username, password, min_size, max_size,
+    )
+
+
+def _close_pool_sync(pool) -> None:
+    try:
+        pool.close(force=True)
+    except Exception:
+        pass
+
+
+async def close_oracle_pool(pool) -> None:
+    """Close the connection pool and release all connections."""
+    await asyncio.to_thread(_close_pool_sync, pool)
+
+
+def _run_query_with_pool_sync(pool, sql: str) -> pl.DataFrame:
+    conn = pool.acquire()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        data = {col: [row[i] for row in rows] for i, col in enumerate(columns)}
+        return pl.DataFrame(data)
+    finally:
+        pool.release(conn)
+
+
+async def run_query_with_pool(pool, sql: str) -> pl.DataFrame:
+    """Run a SQL query using a connection acquired from the given pool."""
+    return await asyncio.to_thread(_run_query_with_pool_sync, pool, sql)

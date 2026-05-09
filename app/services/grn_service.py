@@ -26,6 +26,7 @@ Processing pipeline (per note-group, up to 900 items per voucher):
       j. PUT  /api/backoffice/receiving/{vousid}  → status 4
   5.  Persist each GRN document to grn_docs table
 """
+import asyncio
 import csv
 import io
 import logging
@@ -119,10 +120,16 @@ def parse_grn_csv(file_bytes: bytes) -> list[dict]:
 # ── Oracle helpers ─────────────────────────────────────────────────────────────
 
 async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
-    from app.services.oracle_service import run_query
-    df = await run_query(
-        oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
-    )
+    """Run a query and return the first row as a tuple, or None. Uses pool if available."""
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(
+            oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+        )
     if df is None or df.is_empty():
         return None
     return df.row(0)
@@ -168,6 +175,112 @@ async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str]
         else:
             cache[key] = (None, None)
     return cache[key]
+
+
+async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load store SID/sbs_sid for all given store codes in one Oracle query."""
+    unknown = [s for s in store_codes if s and s not in cache]
+    if not unknown:
+        return
+    placeholders = ", ".join(str(s) for s in unknown)
+    sql = f"SELECT store_code, sid, sbs_sid FROM rps.store WHERE store_code IN ({placeholders})"
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is not None and not df.is_empty():
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            sc = str(row.get("STORE_CODE") or "").strip()
+            if sc:
+                cache[sc] = (
+                    str(row["SID"]) if row.get("SID") else None,
+                    str(row["SBS_SID"]) if row.get("SBS_SID") else None,
+                )
+    for s in unknown:
+        if s not in cache:
+            cache[s] = (None, None)
+
+
+async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load vendor SIDs for all given vendor codes in one Oracle query."""
+    unknown = [v for v in vendor_codes if v and v not in cache]
+    if not unknown:
+        return
+    placeholders = ", ".join(str(v) for v in unknown)
+    sql = f"SELECT vend_id, sid FROM rps.vendor WHERE vend_id IN ({placeholders})"
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is not None and not df.is_empty():
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            vk = str(row.get("VEND_ID") or "").strip()
+            if vk:
+                cache[vk] = str(row["SID"]) if row.get("SID") else None
+    for v in unknown:
+        if v not in cache:
+            cache[v] = None
+
+
+async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load item SID/active for all given UPCs in one Oracle query."""
+    unknown = [u for u in upcs if u and u not in cache]
+    if not unknown:
+        return
+    placeholders = ", ".join(f"'{u}'" for u in unknown)
+    sql = f"SELECT upc, sid, active FROM rps.invn_sbs_item WHERE upc IN ({placeholders})"
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is not None and not df.is_empty():
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            upc_key = str(row.get("UPC") or "").strip()
+            if upc_key:
+                cache[upc_key] = (
+                    str(row["SID"]) if row.get("SID") is not None else None,
+                    int(row["ACTIVE"]) if row.get("ACTIVE") is not None else None,
+                )
+    for u in unknown:
+        if u not in cache:
+            cache[u] = (None, None)
+
+
+async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
+    """Return the set of notes already finalised in RetailPro (one Oracle query for all notes)."""
+    if not notes:
+        return set()
+    placeholders = ", ".join(f"'{n}'" for n in notes)
+    sql = (
+        "SELECT vc.comments "
+        "FROM rps.vou_comment vc "
+        "JOIN rps.voucher v ON v.sid = vc.vou_sid "
+        f"WHERE vc.comments IN ({placeholders}) "
+        "AND v.status = 4"
+    )
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is None or df.is_empty():
+        return set()
+    df.columns = [c.upper() for c in df.columns]
+    return {str(row.get("COMMENTS") or "").strip() for row in df.iter_rows(named=True) if row.get("COMMENTS")}
 
 
 # ── RetailPro API calls ────────────────────────────────────────────────────────
@@ -661,28 +774,9 @@ async def _process_note_group(
 # ── Duplicate-note guard ───────────────────────────────────────────────────────
 
 async def _note_already_processed_in_retailpro(note: str, oc: dict) -> bool:
-    """
-    Return True if *note* already exists as a finalised voucher comment in RetailPro.
-
-    Checks Oracle directly:
-        SELECT vc.comments
-        FROM rps.vou_comment vc
-        JOIN rps.voucher v ON v.sid = vc.vou_sid
-        WHERE vc.comments = '{note}'
-        AND v.status = 4;
-
-    A result means the GRN was already completed (status 4); skip re-processing.
-    No result means it is safe to process.
-    """
-    sql = (
-        "SELECT vc.comments "
-        "FROM rps.vou_comment vc "
-        "JOIN rps.voucher v ON v.sid = vc.vou_sid "
-        f"WHERE vc.comments = '{note}' "
-        "AND v.status = 4"
-    )
-    row = await _oracle_row(sql, oc)
-    return row is not None
+    """Single-note duplicate check (kept for fallback; prefer _batch_check_processed_notes)."""
+    processed = await _batch_check_processed_notes([note], oc)
+    return note in processed
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
@@ -723,6 +817,19 @@ async def process_grn_csv(
         "password":     (await get_setting("oracle_password"))     or "",
     }
 
+    # Create Oracle connection pool (1 per concurrent group + 1 for pre-loads)
+    from app.services.oracle_service import create_oracle_pool, close_oracle_pool
+    try:
+        oc["pool"] = await create_oracle_pool(
+            oc["host"], oc["port"], oc["service_name"],
+            oc["username"], oc["password"],
+            min_size=1, max_size=5,
+        )
+        logger.info("[GRN] Oracle connection pool created.")
+    except Exception as exc:
+        logger.warning("[GRN] Oracle pool creation failed, using per-query connections: %s", exc)
+        oc["pool"] = None
+
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session = await get_auth_session()
     await sit_session(base_url, auth_session)
@@ -738,6 +845,22 @@ async def process_grn_csv(
     item_info_cache: dict = {}
     all_docs:        list[dict] = []
 
+    # ── Pre-load caches (bulk Oracle queries before any processing) ───────────
+    all_store_codes  = list({row.get("STORE_CODE", "").strip() for row in rows if row.get("STORE_CODE", "").strip()})
+    all_vendor_codes = list({row.get("VENDOR_CODE", "").strip() for row in rows if row.get("VENDOR_CODE", "").strip()})
+    all_upcs         = list({row.get("UPC", "").strip()         for row in rows if row.get("UPC", "").strip()})
+    all_notes        = list(note_groups.keys())
+
+    await _batch_load_store_sids(all_store_codes, store_cache, oc)
+    await _batch_load_vendor_sids(all_vendor_codes, vendor_cache, oc)
+    await _batch_load_item_info(all_upcs, item_info_cache, oc)
+    already_processed_notes = await _batch_check_processed_notes(all_notes, oc)
+    logger.info(
+        "[GRN] Pre-loaded %d stores, %d vendors, %d UPCs; %d/%d notes already processed.",
+        len(store_cache), len(vendor_cache), len(item_info_cache),
+        len(already_processed_notes), len(all_notes),
+    )
+
     import_id = str(_uuid.uuid4())
     _active_import_id = import_id
     cancelled = False
@@ -748,14 +871,13 @@ async def process_grn_csv(
             verify=False,
             follow_redirects=True,
         ) as http:
-            for note, note_rows in note_groups.items():
-                if _is_cancelled(import_id):
-                    cancelled = True
-                    logger.info("[GRN] Import %s cancelled after note=%s", import_id, note)
-                    break
+            sem = asyncio.Semaphore(3)
 
-                # Reject notes that are already finalised in RetailPro (Oracle).
-                if await _note_already_processed_in_retailpro(note, oc):
+            async def _process_one(note: str, note_rows: list[dict]) -> Optional[list[dict]]:
+                if _is_cancelled(import_id):
+                    return None
+
+                if note in already_processed_notes:
                     store_code = note_rows[0].get("STORE_CODE", "").strip()
                     store_name = note_rows[0].get("STORE_NAME", "").strip()
                     dup_doc = {
@@ -763,29 +885,25 @@ async def process_grn_csv(
                         "note": note,
                         "store_code": store_code,
                         "store_name": store_name,
-                        "storesid": None,
-                        "sbssid": None,
-                        "vendsid": None,
-                        "vousid": None,
+                        "storesid": None, "sbssid": None, "vendsid": None, "vousid": None,
                         "item_count": len(note_rows),
                         "posted_count": 0,
                         "error_count": len(note_rows),
                         "status": "error",
                         "error_message": (
                             f"Note '{note}' has already been processed in RetailPro. "
-                            f"Skipping to avoid duplicate GRN."
+                            "Skipping to avoid duplicate GRN."
                         ),
                         "items_data": [],
                     }
                     logger.warning("[GRN] Skipping note='%s' — already finalised in RetailPro.", note)
                     await _persist_grn_doc(dup_doc)
-                    all_docs.append(dup_doc)
-                    continue
+                    return [dup_doc]
 
-                # Validate: every row in a note-group must share the same Vendor Code.
-                vendor_codes = {str(r.get("VENDOR_CODE", "")).strip() for r in note_rows}
-                vendor_codes.discard("")
-                if len(vendor_codes) > 1:
+                # Validate: every row must share the same Vendor Code
+                vendor_codes_set = {str(r.get("VENDOR_CODE", "")).strip() for r in note_rows}
+                vendor_codes_set.discard("")
+                if len(vendor_codes_set) > 1:
                     store_code = note_rows[0].get("STORE_CODE", "").strip()
                     store_name = note_rows[0].get("STORE_NAME", "").strip()
                     err_doc = {
@@ -793,42 +911,47 @@ async def process_grn_csv(
                         "note": note,
                         "store_code": store_code,
                         "store_name": store_name,
-                        "storesid": None,
-                        "sbssid": None,
-                        "vendsid": None,
-                        "vousid": None,
+                        "storesid": None, "sbssid": None, "vendsid": None, "vousid": None,
                         "item_count": len(note_rows),
                         "posted_count": 0,
                         "error_count": len(note_rows),
                         "status": "error",
                         "error_message": (
                             f"Multiple vendors in GRN note='{note}': "
-                            f"{', '.join(sorted(vendor_codes))}. "
-                            f"All rows in a note group must share the same Vendor Code."
+                            f"{', '.join(sorted(vendor_codes_set))}. "
+                            "All rows in a note group must share the same Vendor Code."
                         ),
                         "items_data": [],
                     }
-                    logger.warning(
-                        "[GRN] Skipping note='%s' — multiple vendor codes: %s",
-                        note, vendor_codes,
-                    )
+                    logger.warning("[GRN] Skipping note='%s' — multiple vendor codes: %s", note, vendor_codes_set)
                     await _persist_grn_doc(err_doc)
-                    all_docs.append(err_doc)
-                    continue
+                    return [err_doc]
 
-                docs = await _process_note_group(
-                    note=note,
-                    rows=note_rows,
-                    source_file=source_file,
-                    base_url=base_url,
-                    auth_session=auth_session,
-                    http=http,
-                    oc=oc,
-                    store_cache=store_cache,
-                    vendor_cache=vendor_cache,
-                    item_info_cache=item_info_cache,
-                )
-                all_docs.extend(docs)
+                async with sem:
+                    if _is_cancelled(import_id):
+                        return None
+                    return await _process_note_group(
+                        note=note,
+                        rows=note_rows,
+                        source_file=source_file,
+                        base_url=base_url,
+                        auth_session=auth_session,
+                        http=http,
+                        oc=oc,
+                        store_cache=store_cache,
+                        vendor_cache=vendor_cache,
+                        item_info_cache=item_info_cache,
+                    )
+
+            tasks = [_process_one(note, note_rows) for note, note_rows in note_groups.items()]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("[GRN] Unexpected error in concurrent task: %s", r)
+                elif r is None:
+                    cancelled = True
+                else:
+                    all_docs.extend(r)
     finally:
         _active_import_id = None
         _cancel_requests.discard(import_id)
@@ -836,6 +959,11 @@ async def process_grn_csv(
             await stand_session(base_url, auth_session)
         except Exception:
             pass
+        if oc.get("pool") is not None:
+            try:
+                await close_oracle_pool(oc["pool"])
+            except Exception as exc:
+                logger.warning("[GRN] Failed to close Oracle pool: %s", exc)
 
     total_docs   = len(all_docs)
     posted_docs  = sum(1 for d in all_docs if d.get("status") == "posted")

@@ -28,6 +28,7 @@ Processing pipeline (per note-group):
      k. PUT  /api/backoffice/transferslip/{slip_sid}  → Unverified 0, Verified 1, verifydate
   5. Persist each transfer slip document to transfer_slip_docs table
 """
+import asyncio
 import csv
 import io
 import logging
@@ -118,11 +119,16 @@ def parse_transfer_slip_csv(file_bytes: bytes) -> list[dict]:
 # ── Oracle helpers ────────────────────────────────────────────────────────────
 
 async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
-    """Run a query and return the first row as a tuple, or None."""
-    from app.services.oracle_service import run_query
-    df = await run_query(
-        oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
-    )
+    """Run a query and return the first row as a tuple, or None. Uses pool if available."""
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(
+            oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+        )
     if df is None or df.is_empty():
         return None
     return df.row(0)
@@ -163,6 +169,87 @@ async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str]
         else:
             cache[key] = (None, None)
     return cache[key]
+
+
+async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load store SID/sbs_sid for all given store codes in one Oracle query."""
+    unknown = [s for s in store_codes if s and s not in cache]
+    if not unknown:
+        return
+    placeholders = ", ".join(str(s) for s in unknown)
+    sql = f"SELECT store_code, sid, sbs_sid FROM rps.store WHERE store_code IN ({placeholders})"
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is not None and not df.is_empty():
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            sc = str(row.get("STORE_CODE") or "").strip()
+            if sc:
+                cache[sc] = (
+                    str(row["SID"]) if row.get("SID") else None,
+                    str(row["SBS_SID"]) if row.get("SBS_SID") else None,
+                )
+    for s in unknown:
+        if s not in cache:
+            cache[s] = (None, None)
+
+
+async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load item SID/active for all given UPCs in one Oracle query."""
+    unknown = [u for u in upcs if u and u not in cache]
+    if not unknown:
+        return
+    placeholders = ", ".join(f"'{u}'" for u in unknown)
+    sql = f"SELECT upc, sid, active FROM rps.invn_sbs_item WHERE upc IN ({placeholders})"
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is not None and not df.is_empty():
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            upc_key = str(row.get("UPC") or "").strip()
+            if upc_key:
+                cache[upc_key] = (
+                    str(row["SID"]) if row.get("SID") is not None else None,
+                    int(row["ACTIVE"]) if row.get("ACTIVE") is not None else None,
+                )
+    for u in unknown:
+        if u not in cache:
+            cache[u] = (None, None)
+
+
+async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
+    """Return the set of notes already finalised in RetailPro (one Oracle query for all notes)."""
+    if not notes:
+        return set()
+    placeholders = ", ".join(f"'{n}'" for n in notes)
+    sql = (
+        "SELECT sc.comments "
+        "FROM rps.slip_comment sc "
+        "LEFT JOIN rps.slip s ON s.sid = sc.slip_sid "
+        f"WHERE sc.comments IN ({placeholders}) "
+        "AND s.status = 4"
+    )
+    pool = oc.get("pool")
+    if pool is not None:
+        from app.services.oracle_service import run_query_with_pool
+        df = await run_query_with_pool(pool, sql)
+    else:
+        from app.services.oracle_service import run_query
+        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+    if df is None or df.is_empty():
+        return set()
+    df.columns = [c.upper() for c in df.columns]
+    return {str(row.get("COMMENTS") or "").strip() for row in df.iter_rows(named=True) if row.get("COMMENTS")}
 
 
 # ── RetailPro API calls ───────────────────────────────────────────────────────
@@ -655,28 +742,9 @@ async def _process_note_group(
 # ── Duplicate-note guard ──────────────────────────────────────────────────────
 
 async def _note_already_processed(note: str, oc: dict) -> bool:
-    """
-    Return True if *note* already exists as a finalised slip comment in RetailPro.
-
-    Checks Oracle directly:
-        SELECT sc.comments
-        FROM rps.slip_comment sc
-        LEFT JOIN rps.slip s ON s.sid = sc.slip_sid
-        WHERE sc.comments = '{note}'
-        AND s.status = 4;
-
-    A result means the slip was already completed (status 4); skip re-processing.
-    No result means it is safe to process.
-    """
-    sql = (
-        "SELECT sc.comments "
-        "FROM rps.slip_comment sc "
-        "LEFT JOIN rps.slip s ON s.sid = sc.slip_sid "
-        f"WHERE sc.comments = '{note}' "
-        "AND s.status = 4"
-    )
-    row = await _oracle_row(sql, oc)
-    return row is not None
+    """Single-note duplicate check (kept for fallback; prefer _batch_check_processed_notes)."""
+    processed = await _batch_check_processed_notes([note], oc)
+    return note in processed
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -717,6 +785,19 @@ async def process_transfer_slip_csv(
         "password":     (await get_setting("oracle_password"))     or "",
     }
 
+    # Create Oracle connection pool (1 per concurrent group + 1 for pre-loads)
+    from app.services.oracle_service import create_oracle_pool, close_oracle_pool
+    try:
+        oc["pool"] = await create_oracle_pool(
+            oc["host"], oc["port"], oc["service_name"],
+            oc["username"], oc["password"],
+            min_size=1, max_size=5,
+        )
+        logger.info("[TransferSlip] Oracle connection pool created.")
+    except Exception as exc:
+        logger.warning("[TransferSlip] Oracle pool creation failed, using per-query connections: %s", exc)
+        oc["pool"] = None
+
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session = await get_auth_session()
     await sit_session(base_url, auth_session)
@@ -731,6 +812,25 @@ async def process_transfer_slip_csv(
     item_info_cache:  dict = {}
     all_docs: list[dict]   = []
 
+    # ── Pre-load caches (bulk Oracle queries before any processing) ───────────
+    all_store_codes = list({
+        c
+        for row in rows
+        for c in (row.get("IN_STORE_NAME", "").strip(), row.get("OUT_STORE_NAME", "").strip())
+        if c
+    })
+    all_upcs = list({row.get("UPC", "").strip() for row in rows if row.get("UPC", "").strip()})
+    all_notes = list(note_groups.keys())
+
+    await _batch_load_store_sids(all_store_codes, store_sids_cache, oc)
+    await _batch_load_item_info(all_upcs, item_info_cache, oc)
+    already_processed_notes = await _batch_check_processed_notes(all_notes, oc)
+    logger.info(
+        "[TransferSlip] Pre-loaded %d stores, %d UPCs; %d/%d notes already processed.",
+        len(store_sids_cache), len(item_info_cache),
+        len(already_processed_notes), len(all_notes),
+    )
+
     import_id = str(_uuid.uuid4())
     _active_import_id = import_id
     cancelled = False
@@ -741,45 +841,59 @@ async def process_transfer_slip_csv(
             verify=False,
             follow_redirects=True,
         ) as http:
-            for note, note_rows in note_groups.items():
-                if _is_cancelled(import_id):
-                    cancelled = True
-                    logger.info("[TransferSlip] Import %s cancelled after note=%s", import_id, note)
-                    break
+            sem = asyncio.Semaphore(3)
 
-                if await _note_already_processed(note, oc):
-                    logger.warning("Skipping duplicate note: %s", note)
+            async def _process_one(note: str, note_rows: list[dict]) -> Optional[dict]:
+                if _is_cancelled(import_id):
+                    return None
+                if note in already_processed_notes:
+                    logger.warning("[TransferSlip] Skipping duplicate note: %s", note)
                     dup_doc: dict = {
-                        "source_file":  source_file,
-                        "note":         note,
+                        "source_file":   source_file,
+                        "note":          note,
                         "in_store_name":  note_rows[0].get("IN_STORE_NAME", "").strip(),
                         "out_store_name": note_rows[0].get("OUT_STORE_NAME", "").strip(),
-                        "item_count":   len(note_rows),
-                        "posted_count": 0,
-                        "error_count":  len(note_rows),
-                        "status":       "error",
+                        "item_count":    len(note_rows),
+                        "posted_count":  0,
+                        "error_count":   len(note_rows),
+                        "status":        "error",
                         "error_message": f'"{note}" has already been processed',
                     }
                     await _persist_slip_doc(dup_doc)
-                    all_docs.append(dup_doc)
-                    continue
+                    return dup_doc
+                async with sem:
+                    if _is_cancelled(import_id):
+                        return None
+                    return await _process_note_group(
+                        note=note,
+                        rows=note_rows,
+                        source_file=source_file,
+                        base_url=base_url,
+                        auth_session=auth_session,
+                        http=http,
+                        oc=oc,
+                        store_sids_cache=store_sids_cache,
+                        item_info_cache=item_info_cache,
+                    )
 
-                doc = await _process_note_group(
-                    note=note,
-                    rows=note_rows,
-                    source_file=source_file,
-                    base_url=base_url,
-                    auth_session=auth_session,
-                    http=http,
-                    oc=oc,
-                    store_sids_cache=store_sids_cache,
-                    item_info_cache=item_info_cache,
-                )
-                all_docs.append(doc)
+            tasks = [_process_one(note, note_rows) for note, note_rows in note_groups.items()]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("[TransferSlip] Unexpected error in concurrent task: %s", r)
+                elif r is None:
+                    cancelled = True
+                else:
+                    all_docs.append(r)
     finally:
         _active_import_id = None
         _cancel_requests.discard(import_id)
         await stand_session(base_url, auth_session)
+        if oc.get("pool") is not None:
+            try:
+                await close_oracle_pool(oc["pool"])
+            except Exception as exc:
+                logger.warning("[TransferSlip] Failed to close Oracle pool: %s", exc)
 
     total_docs   = len(all_docs)
     posted_docs  = sum(1 for d in all_docs if d.get("status") == "posted")
