@@ -38,6 +38,7 @@ from typing import Any, Optional
 import httpx
 
 from app.core.timezone import now_pkt
+from app.services.http_utils import http_call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,8 @@ async def _create_transfer_slip(
             "verified": True,
         }]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/transferslip",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -236,7 +238,8 @@ async def _post_slip_items(
             if item.get("item_sid")
         ]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/transferslip/{slip_sid}/slipitem",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -266,7 +269,8 @@ async def _post_slip_comment(
             "comments": note,
         }]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/slipcomment",
         params={"comments": note, "slipsid": slip_sid},
         json=payload,
@@ -289,7 +293,8 @@ async def _get_slip_rowversion(
     GET /api/backoffice/transferslip?filter=(sid,eq,{slip_sid})
     Returns (rowversion, response_json).
     """
-    resp = await http.get(
+    resp = await http_call_with_retry(
+        http.get,
         f"{base_url}/api/backoffice/transferslip",
         params={"filter": f"(sid,eq,{slip_sid})"},
         headers=_rp_headers(auth_session),
@@ -316,7 +321,8 @@ async def _finalize_slip(
     Returns (payload_sent, response_json).
     """
     payload = {"data": [{"rowversion": rowversion, "status": 4}]}
-    resp = await http.put(
+    resp = await http_call_with_retry(
+        http.put,
         f"{base_url}/api/backoffice/transferslip/{slip_sid}",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -349,7 +355,8 @@ async def _verify_slip(
             "verifydate": verifydate,
         }]
     }
-    resp = await http.put(
+    resp = await http_call_with_retry(
+        http.put,
         f"{base_url}/api/backoffice/transferslip/{slip_sid}",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -729,7 +736,11 @@ async def process_transfer_slip_csv(
     cancelled = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
+            verify=False,
+            follow_redirects=True,
+        ) as http:
             for note, note_rows in note_groups.items():
                 if _is_cancelled(import_id):
                     cancelled = True

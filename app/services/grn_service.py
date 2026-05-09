@@ -36,6 +36,7 @@ from typing import Optional
 import httpx
 
 from app.core.timezone import now_pkt
+from app.services.http_utils import http_call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,8 @@ async def _create_grn_doc(
             "verified": True,
         }]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/receiving",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -227,7 +229,8 @@ async def _get_grn_rowversion(
     GET /api/backoffice/receiving?filter=(sid,eq,{vousid})
     Returns (rowversion, response_json).
     """
-    resp = await http.get(
+    resp = await http_call_with_retry(
+        http.get,
         f"{base_url}/api/backoffice/receiving",
         params={"filter": f"(sid,eq,{vousid})"},
         headers=_rp_headers(auth_session),
@@ -255,7 +258,8 @@ async def _update_grn_vendor(
     Returns (payload_sent, response_json).
     """
     payload = {"data": [{"rowversion": rowversion, "vendsid": vendsid}]}
-    resp = await http.put(
+    resp = await http_call_with_retry(
+        http.put,
         f"{base_url}/api/backoffice/receiving/{vousid}",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -291,7 +295,8 @@ async def _post_grn_items(
             if item.get("item_sid")
         ]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/receiving/{vousid}/recvitem",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -321,7 +326,8 @@ async def _post_grn_comment(
             "vousid": vousid,
         }]
     }
-    resp = await http.post(
+    resp = await http_call_with_retry(
+        http.post,
         f"{base_url}/api/backoffice/receiving/{vousid}/recvcomment",
         params={"comments": note},
         json=payload,
@@ -346,7 +352,8 @@ async def _finalize_grn(
     Returns (payload_sent, response_json).
     """
     payload = {"data": [{"rowversion": rowversion, "status": 4, "approvstatus": 2, "publishstatus": 2}]}
-    resp = await http.put(
+    resp = await http_call_with_retry(
+        http.put,
         f"{base_url}/api/backoffice/receiving/{vousid}",
         json=payload,
         headers=_rp_headers(auth_session),
@@ -736,7 +743,11 @@ async def process_grn_csv(
     cancelled = False
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
+            verify=False,
+            follow_redirects=True,
+        ) as http:
             for note, note_rows in note_groups.items():
                 if _is_cancelled(import_id):
                     cancelled = True
