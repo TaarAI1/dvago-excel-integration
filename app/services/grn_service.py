@@ -206,13 +206,20 @@ async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) 
             for row in df.iter_rows(named=True):
                 sc = str(row.get("STORE_CODE") or "").strip()
                 if sc:
-                    cache[sc] = (
+                    val = (
                         str(row["SID"]) if row.get("SID") else None,
                         str(row["SBS_SID"]) if row.get("SBS_SID") else None,
                     )
+                    cache[sc] = val
+
+    # Oracle may return numeric store codes as "13" while the CSV input was "013".
     for s in unknown:
         if s not in cache:
-            cache[s] = (None, None)
+            try:
+                norm = str(int(float(s)))  # "013" → "13"
+                cache[s] = cache[norm] if norm in cache else (None, None)
+            except (ValueError, TypeError):
+                cache[s] = (None, None)
 
 
 async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict) -> None:
@@ -236,9 +243,15 @@ async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict
                 vk = str(row.get("VEND_ID") or "").strip()
                 if vk:
                     cache[vk] = str(row["SID"]) if row.get("SID") else None
+
+    # Oracle may return numeric vendor IDs as "123" while the CSV input was "0123".
     for v in unknown:
         if v not in cache:
-            cache[v] = None
+            try:
+                norm = str(int(float(v)))  # "0123" → "123"
+                cache[v] = cache[norm] if norm in cache else None
+            except (ValueError, TypeError):
+                cache[v] = None
 
 
 async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:

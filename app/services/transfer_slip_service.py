@@ -200,13 +200,22 @@ async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) 
             for row in df.iter_rows(named=True):
                 sc = str(row.get("STORE_CODE") or "").strip()
                 if sc:
-                    cache[sc] = (
+                    val = (
                         str(row["SID"]) if row.get("SID") else None,
                         str(row["SBS_SID"]) if row.get("SBS_SID") else None,
                     )
+                    cache[sc] = val
+
+    # Oracle may return numeric store codes as "13" while the CSV input was "013".
+    # For any input key still not in cache, try matching by integer value so the
+    # correct result is cached under the exact CSV key (prevents a false (None, None)).
     for s in unknown:
         if s not in cache:
-            cache[s] = (None, None)
+            try:
+                norm = str(int(float(s)))  # "013" → "13"
+                cache[s] = cache[norm] if norm in cache else (None, None)
+            except (ValueError, TypeError):
+                cache[s] = (None, None)
 
 
 async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
