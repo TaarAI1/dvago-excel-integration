@@ -63,6 +63,13 @@ async def connect_db(database_url: str):
         await conn.execute(text(
             "ALTER TABLE transfer_slip_docs ADD COLUMN IF NOT EXISTS api_verify_response JSONB"
         ))
+        # transfer_slip_docs + grn_docs — full error traceback
+        await conn.execute(text(
+            "ALTER TABLE transfer_slip_docs ADD COLUMN IF NOT EXISTS error_traceback TEXT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE grn_docs ADD COLUMN IF NOT EXISTS error_traceback TEXT"
+        ))
 
     logger.info("Connected to PostgreSQL and tables ensured.")
 

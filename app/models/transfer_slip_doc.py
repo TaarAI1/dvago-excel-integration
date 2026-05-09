@@ -24,6 +24,7 @@ class TransferSlipDoc(Base):
     error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_traceback: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Full API call traces stored as JSONB
     api_create_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -63,6 +64,7 @@ def transfer_slip_doc_to_response(doc: TransferSlipDoc) -> dict:
         "error_count": doc.error_count,
         "status": doc.status,
         "error_message": doc.error_message,
+        "error_traceback": doc.error_traceback,
         "api_create_payload": doc.api_create_payload,
         "api_create_response": doc.api_create_response,
         "api_items_payload": doc.api_items_payload,

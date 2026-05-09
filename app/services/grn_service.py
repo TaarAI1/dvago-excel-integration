@@ -29,6 +29,7 @@ Processing pipeline (per note-group, up to 900 items per voucher):
 import csv
 import io
 import logging
+import traceback
 import uuid as _uuid
 from typing import Optional
 
@@ -380,6 +381,7 @@ async def _persist_grn_doc(doc_data: dict) -> None:
                 error_count=doc_data.get("error_count", 0),
                 status=doc_data.get("status", "pending"),
                 error_message=doc_data.get("error_message"),
+                error_traceback=doc_data.get("error_traceback"),
                 api_create_payload=doc_data.get("api_create_payload"),
                 api_create_response=doc_data.get("api_create_response"),
                 api_get_rowversion_response=doc_data.get("api_get_rowversion_response"),
@@ -630,8 +632,9 @@ async def _process_note_group(
 
         except Exception as exc:
             logger.exception("Error processing GRN note='%s' chunk=%d", note, chunk_idx)
-            doc_data["error_message"] = str(exc)
-            doc_data["error_count"]   = len(chunk)
+            doc_data["error_message"]   = str(exc)
+            doc_data["error_traceback"] = traceback.format_exc()
+            doc_data["error_count"]     = len(chunk)
 
         try:
             await _persist_grn_doc(doc_data)

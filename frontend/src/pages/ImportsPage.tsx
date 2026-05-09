@@ -1708,6 +1708,7 @@ interface TransferSlipDoc {
   error_count: number
   status: 'posted' | 'partial' | 'error' | 'pending'
   error_message: string | null
+  error_traceback: string | null
   api_create_payload: unknown
   api_create_response: unknown
   api_items_payload: unknown
@@ -1845,6 +1846,22 @@ function TransferSlipDetailDialog({ doc, onClose }: { doc: TransferSlipDoc | nul
             <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
               <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
                 color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        {doc.error_traceback && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+              textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
+              Full Traceback
+            </Typography>
+            <Box sx={{ bgcolor: '#1e1e2e', border: '1px solid #374151', borderRadius: '6px',
+              p: 1.5, maxHeight: 320, overflow: 'auto' }}>
+              <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#f8d7da', wordBreak: 'break-word', lineHeight: 1.6 }}>
+                {doc.error_traceback}
+              </Typography>
             </Box>
           </Box>
         )}
@@ -2190,6 +2207,7 @@ interface GRNDoc {
   error_count: number
   status: 'posted' | 'partial' | 'error' | 'pending'
   error_message: string | null
+  error_traceback: string | null
   api_create_payload: unknown
   api_create_response: unknown
   api_get_rowversion_response: unknown
@@ -2326,6 +2344,22 @@ function GRNDetailDialog({ doc, onClose }: { doc: GRNDoc | null; onClose: () => 
             <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
               <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
                 color: '#7f1d1d', wordBreak: 'break-word' }}>{doc.error_message}</Typography>
+            </Box>
+          </Box>
+        )}
+
+        {doc.error_traceback && (
+          <Box sx={{ mx: 3, mb: 2 }}>
+            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: '#374151',
+              textTransform: 'uppercase', letterSpacing: '0.06em', mb: 0.75 }}>
+              Full Traceback
+            </Typography>
+            <Box sx={{ bgcolor: '#1e1e2e', border: '1px solid #374151', borderRadius: '6px',
+              p: 1.5, maxHeight: 320, overflow: 'auto' }}>
+              <Typography sx={{ fontSize: '0.7rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap',
+                color: '#f8d7da', wordBreak: 'break-word', lineHeight: 1.6 }}>
+                {doc.error_traceback}
+              </Typography>
             </Box>
           </Box>
         )}
