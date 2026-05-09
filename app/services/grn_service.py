@@ -119,6 +119,15 @@ def parse_grn_csv(file_bytes: bytes) -> list[dict]:
 
 # ── Oracle helpers ─────────────────────────────────────────────────────────────
 
+_ORA_IN_LIMIT = 999  # Oracle hard-limits IN (...) to 1000 expressions
+
+
+def _chunks(lst: list, size: int):
+    """Yield successive sub-lists of at most `size` items."""
+    for i in range(0, len(lst), size):
+        yield lst[i : i + size]
+
+
 async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
     """Run a query and return the first row as a tuple, or None. Uses pool if available."""
     pool = oc.get("pool")
@@ -178,109 +187,118 @@ async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str]
 
 
 async def _batch_load_store_sids(store_codes: list[str], cache: dict, oc: dict) -> None:
-    """Bulk-load store SID/sbs_sid for all given store codes in one Oracle query."""
+    """Bulk-load store SID/sbs_sid for all given store codes (chunked to avoid ORA-01795)."""
     unknown = [s for s in store_codes if s and s not in cache]
     if not unknown:
         return
-    placeholders = ", ".join(str(s) for s in unknown)
-    sql = f"SELECT store_code, sid, sbs_sid FROM rps.store WHERE store_code IN ({placeholders})"
     pool = oc.get("pool")
-    if pool is not None:
-        from app.services.oracle_service import run_query_with_pool
-        df = await run_query_with_pool(pool, sql)
-    else:
-        from app.services.oracle_service import run_query
-        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
-    if df is not None and not df.is_empty():
-        df.columns = [c.upper() for c in df.columns]
-        for row in df.iter_rows(named=True):
-            sc = str(row.get("STORE_CODE") or "").strip()
-            if sc:
-                cache[sc] = (
-                    str(row["SID"]) if row.get("SID") else None,
-                    str(row["SBS_SID"]) if row.get("SBS_SID") else None,
-                )
+    for chunk in _chunks(unknown, _ORA_IN_LIMIT):
+        placeholders = ", ".join(str(s) for s in chunk)
+        sql = f"SELECT store_code, sid, sbs_sid FROM rps.store WHERE store_code IN ({placeholders})"
+        if pool is not None:
+            from app.services.oracle_service import run_query_with_pool
+            df = await run_query_with_pool(pool, sql)
+        else:
+            from app.services.oracle_service import run_query
+            df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+        if df is not None and not df.is_empty():
+            df.columns = [c.upper() for c in df.columns]
+            for row in df.iter_rows(named=True):
+                sc = str(row.get("STORE_CODE") or "").strip()
+                if sc:
+                    cache[sc] = (
+                        str(row["SID"]) if row.get("SID") else None,
+                        str(row["SBS_SID"]) if row.get("SBS_SID") else None,
+                    )
     for s in unknown:
         if s not in cache:
             cache[s] = (None, None)
 
 
 async def _batch_load_vendor_sids(vendor_codes: list[str], cache: dict, oc: dict) -> None:
-    """Bulk-load vendor SIDs for all given vendor codes in one Oracle query."""
+    """Bulk-load vendor SIDs for all given vendor codes (chunked to avoid ORA-01795)."""
     unknown = [v for v in vendor_codes if v and v not in cache]
     if not unknown:
         return
-    placeholders = ", ".join(str(v) for v in unknown)
-    sql = f"SELECT vend_id, sid FROM rps.vendor WHERE vend_id IN ({placeholders})"
     pool = oc.get("pool")
-    if pool is not None:
-        from app.services.oracle_service import run_query_with_pool
-        df = await run_query_with_pool(pool, sql)
-    else:
-        from app.services.oracle_service import run_query
-        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
-    if df is not None and not df.is_empty():
-        df.columns = [c.upper() for c in df.columns]
-        for row in df.iter_rows(named=True):
-            vk = str(row.get("VEND_ID") or "").strip()
-            if vk:
-                cache[vk] = str(row["SID"]) if row.get("SID") else None
+    for chunk in _chunks(unknown, _ORA_IN_LIMIT):
+        placeholders = ", ".join(str(v) for v in chunk)
+        sql = f"SELECT vend_id, sid FROM rps.vendor WHERE vend_id IN ({placeholders})"
+        if pool is not None:
+            from app.services.oracle_service import run_query_with_pool
+            df = await run_query_with_pool(pool, sql)
+        else:
+            from app.services.oracle_service import run_query
+            df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+        if df is not None and not df.is_empty():
+            df.columns = [c.upper() for c in df.columns]
+            for row in df.iter_rows(named=True):
+                vk = str(row.get("VEND_ID") or "").strip()
+                if vk:
+                    cache[vk] = str(row["SID"]) if row.get("SID") else None
     for v in unknown:
         if v not in cache:
             cache[v] = None
 
 
 async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
-    """Bulk-load item SID/active for all given UPCs in one Oracle query."""
+    """Bulk-load item SID/active for all given UPCs (chunked to avoid ORA-01795)."""
     unknown = [u for u in upcs if u and u not in cache]
     if not unknown:
         return
-    placeholders = ", ".join(f"'{u}'" for u in unknown)
-    sql = f"SELECT upc, sid, active FROM rps.invn_sbs_item WHERE upc IN ({placeholders})"
     pool = oc.get("pool")
-    if pool is not None:
-        from app.services.oracle_service import run_query_with_pool
-        df = await run_query_with_pool(pool, sql)
-    else:
-        from app.services.oracle_service import run_query
-        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
-    if df is not None and not df.is_empty():
-        df.columns = [c.upper() for c in df.columns]
-        for row in df.iter_rows(named=True):
-            upc_key = str(row.get("UPC") or "").strip()
-            if upc_key:
-                cache[upc_key] = (
-                    str(row["SID"]) if row.get("SID") is not None else None,
-                    int(row["ACTIVE"]) if row.get("ACTIVE") is not None else None,
-                )
+    for chunk in _chunks(unknown, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"'{u}'" for u in chunk)
+        sql = f"SELECT upc, sid, active FROM rps.invn_sbs_item WHERE upc IN ({placeholders})"
+        if pool is not None:
+            from app.services.oracle_service import run_query_with_pool
+            df = await run_query_with_pool(pool, sql)
+        else:
+            from app.services.oracle_service import run_query
+            df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+        if df is not None and not df.is_empty():
+            df.columns = [c.upper() for c in df.columns]
+            for row in df.iter_rows(named=True):
+                upc_key = str(row.get("UPC") or "").strip()
+                if upc_key:
+                    cache[upc_key] = (
+                        str(row["SID"]) if row.get("SID") is not None else None,
+                        int(row["ACTIVE"]) if row.get("ACTIVE") is not None else None,
+                    )
     for u in unknown:
         if u not in cache:
             cache[u] = (None, None)
 
 
 async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
-    """Return the set of notes already finalised in RetailPro (one Oracle query for all notes)."""
+    """Return the set of notes already finalised in RetailPro (chunked to avoid ORA-01795)."""
     if not notes:
         return set()
-    placeholders = ", ".join(f"'{n}'" for n in notes)
-    sql = (
-        "SELECT vc.comments "
-        "FROM rps.vou_comment vc "
-        "JOIN rps.voucher v ON v.sid = vc.vou_sid "
-        f"WHERE vc.comments IN ({placeholders}) "
-        "AND v.status = 4"
-    )
     pool = oc.get("pool")
-    if pool is not None:
-        from app.services.oracle_service import run_query_with_pool
-        df = await run_query_with_pool(pool, sql)
-    else:
-        from app.services.oracle_service import run_query
-        df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
-    if df is None or df.is_empty():
-        return set()
-    df.columns = [c.upper() for c in df.columns]
-    return {str(row.get("COMMENTS") or "").strip() for row in df.iter_rows(named=True) if row.get("COMMENTS")}
+    result: set[str] = set()
+    for chunk in _chunks(notes, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"'{n}'" for n in chunk)
+        sql = (
+            "SELECT vc.comments "
+            "FROM rps.vou_comment vc "
+            "JOIN rps.voucher v ON v.sid = vc.vou_sid "
+            f"WHERE vc.comments IN ({placeholders}) "
+            "AND v.status = 4"
+        )
+        if pool is not None:
+            from app.services.oracle_service import run_query_with_pool
+            df = await run_query_with_pool(pool, sql)
+        else:
+            from app.services.oracle_service import run_query
+            df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
+        if df is not None and not df.is_empty():
+            df.columns = [c.upper() for c in df.columns]
+            result.update(
+                str(row.get("COMMENTS") or "").strip()
+                for row in df.iter_rows(named=True)
+                if row.get("COMMENTS")
+            )
+    return result
 
 
 # ── RetailPro API calls ────────────────────────────────────────────────────────
