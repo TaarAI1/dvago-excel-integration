@@ -725,6 +725,7 @@ function ManualExportTab() {
   const today = new Date().toISOString().slice(0, 10)
   const firstOfMonth = today.slice(0, 8) + '01'
 
+  const [exportType, setExportType] = useState<'sales' | 'return'>('sales')
   const [storeNo, setStoreNo]     = useState<string>('')
   const [fromDate, setFromDate]   = useState(firstOfMonth)
   const [toDate, setToDate]       = useState(today)
@@ -751,7 +752,7 @@ function ManualExportTab() {
     try {
       const res = await apiClient.post(
         '/api/sales-export/manual-download',
-        { store_no: Number(storeNo), from_date: fromDate, to_date: toDate },
+        { store_no: Number(storeNo), from_date: fromDate, to_date: toDate, export_type: exportType },
         { responseType: 'blob' },
       )
 
@@ -788,8 +789,25 @@ function ManualExportTab() {
   return (
     <Box sx={{ maxWidth: 680 }}>
       <Typography sx={{ fontSize: '0.8rem', color: '#6b7280', mb: 2.5 }}>
-        Select a store and date range to run the export query and download the result as a CSV file.
+        Select a type, store and date range to run the export query and download the result as a CSV file.
       </Typography>
+
+      {/* Export type toggle */}
+      <Box sx={{ display: 'flex', gap: 1, mb: 2.5 }}>
+        {(['sales', 'return'] as const).map(type => (
+          <Box key={type} onClick={() => { setExportType(type); setError(null); setSuccess(null) }}
+            sx={{
+              px: 2.5, py: 0.75, borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem',
+              fontWeight: 600, border: '1px solid',
+              borderColor: exportType === type ? '#1a56db' : '#e5e7eb',
+              bgcolor: exportType === type ? '#eff6ff' : 'white',
+              color: exportType === type ? '#1a56db' : '#6b7280',
+              transition: 'all 0.15s',
+            }}>
+            {type === 'sales' ? 'Sales' : 'Returns'}
+          </Box>
+        ))}
+      </Box>
 
       {storesError && (
         <Alert severity="warning" sx={{ mb: 2, fontSize: '0.78rem' }}>
@@ -881,7 +899,7 @@ function ManualExportTab() {
               textTransform: 'none', borderRadius: '6px', px: 2.5,
             }}
           >
-            {downloading ? 'Exporting…' : 'Export & Download CSV'}
+            {downloading ? 'Exporting…' : `Export ${exportType === 'sales' ? 'Sales' : 'Returns'} & Download CSV`}
           </Button>
         </Box>
       </Box>

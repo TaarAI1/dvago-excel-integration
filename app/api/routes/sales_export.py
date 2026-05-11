@@ -14,8 +14,9 @@ router = APIRouter(prefix="/api/sales-export", tags=["sales-export"])
 
 class ManualExportRequest(BaseModel):
     store_no: int
-    from_date: str  # YYYY-MM-DD
-    to_date: str    # YYYY-MM-DD
+    from_date: str   # YYYY-MM-DD
+    to_date: str     # YYYY-MM-DD
+    export_type: str = "sales"  # "sales" | "return"
 
 
 @router.post("/trigger")
@@ -164,23 +165,23 @@ async def manual_export_download(
     if not oc["host"] or not oc["service"]:
         raise HTTPException(status_code=503, detail="Oracle connection not configured.")
 
-    sql_template = (await get_setting("sales_export_sql", "")) or ""
+    is_return    = body.export_type == "return"
+    setting_key  = "return_sale_sql" if is_return else "sales_export_sql"
+    type_label   = "return" if is_return else "sales"
+
+    sql_template = (await get_setting(setting_key, "")) or ""
     if not sql_template:
-        raise HTTPException(status_code=503, detail="Export SQL query is not configured.")
+        raise HTTPException(status_code=503, detail=f"{type_label.title()} export SQL query is not configured.")
 
     # Inject store filter
     sql = _inject_store(sql_template, body.store_no)
 
-    # Inject date filters (replace {from_date} and {to_date} placeholders)
+    # Inject date — support both {date} (single day) and {from_date}/{to_date} placeholders
+    sql = sql.replace("{date}", body.from_date)
     if "{from_date}" in sql:
         sql = sql.replace("{from_date}", body.from_date)
-    else:
-        logger.warning("No {from_date} placeholder in SQL — from_date filter not applied.")
-
     if "{to_date}" in sql:
         sql = sql.replace("{to_date}", body.to_date)
-    else:
-        logger.warning("No {to_date} placeholder in SQL — to_date filter not applied.")
 
     try:
         df = await run_query(oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"], sql)
@@ -191,7 +192,7 @@ async def manual_export_download(
         raise HTTPException(status_code=404, detail="No data found for the selected store and date range.")
 
     csv_bytes = df.write_csv().encode("utf-8")
-    filename = f"manual_export_{body.store_no}_{body.from_date}_{body.to_date}.csv"
+    filename = f"manual_{type_label}_{body.store_no}_{body.from_date}_{body.to_date}.csv"
 
     return Response(
         content=csv_bytes,
