@@ -599,6 +599,20 @@ export default function SettingsPage() {
                 {'<prefix>_YYYYMMDD_HHMMSS.csv'}
               </code>
             </Typography>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Return Sale Settings</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12 }}>{F('return_sale_sql', 'SQL Query')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('return_sale_filename_prefix', 'Filename Prefix')}</Grid>
+            </Grid>
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
+              Output: <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 3 }}>
+                {'<prefix>_YYYYMMDD_HHMMSS.csv'}
+              </code>
+            </Typography>
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="sales_export" />
           </TabPanel>

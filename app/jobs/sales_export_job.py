@@ -132,14 +132,16 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
 
     logger.info("Sales export job started. run_id=%s triggered_by=%s", run_id, triggered_by)
 
-    oc           = await _load_oracle_settings()
-    sql_template = (await get_setting("sales_export_sql", "")) or ""
-    ftp_host     = await get_setting("ftp_host",     "localhost")
-    ftp_port     = int(await get_setting("ftp_port", "21") or "21")
-    ftp_user     = await get_setting("ftp_user",     "anonymous")
-    ftp_password = (await get_setting("ftp_password", "") or "")
-    export_path  = (await get_setting("ftp_export_path", "/exports") or "/exports")
-    prefix       = (await get_setting("sales_export_filename_prefix", "sales_export") or "sales_export")
+    oc                  = await _load_oracle_settings()
+    sql_template        = (await get_setting("sales_export_sql", "")) or ""
+    ftp_host            = await get_setting("ftp_host",     "localhost")
+    ftp_port            = int(await get_setting("ftp_port", "21") or "21")
+    ftp_user            = await get_setting("ftp_user",     "anonymous")
+    ftp_password        = (await get_setting("ftp_password", "") or "")
+    export_path         = (await get_setting("ftp_export_path", "/exports") or "/exports")
+    prefix              = (await get_setting("sales_export_filename_prefix", "sales_export") or "sales_export")
+    return_sql_template = (await get_setting("return_sale_sql", "")) or ""
+    return_prefix       = (await get_setting("return_sale_filename_prefix", "return_sale") or "return_sale")
 
     if not oc["host"] or not oc["service"] or not sql_template:
         msg = "Sales export skipped: Oracle host, service name, or SQL query not configured."
@@ -383,6 +385,53 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
 
         await _update_run(run_id, processed_stores=idx + 1)
         _progress[run_id]["done"] = idx + 1
+
+    # ── Return sale loop (runs only if return_sale_sql is configured) ────────
+    if return_sql_template:
+        return_timestamp = started_at.strftime('%Y%m%d_%H%M%S')
+        for store_no, store_name in store_list:
+            if _is_cancelled(run_id):
+                break
+            return_filename = f"{return_prefix}_{store_no}_{return_timestamp}.csv"
+            return_sql      = _inject_store(return_sql_template, store_no)
+            store_start     = time.monotonic()
+            try:
+                df = await run_query(
+                    oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
+                    return_sql,
+                )
+                if df is None or df.is_empty():
+                    logger.info("Return sale export store %s: no data — skipped", store_no)
+                    results.append({"store_no": store_no, "type": "return_sale", "status": "skipped", "rows": 0})
+                    continue
+                csv_bytes    = df.write_csv().encode("utf-8")
+                written_rows = max(0, csv_bytes.count(b'\n') - 1)
+                await asyncio.to_thread(
+                    upload_file, csv_bytes, return_filename,
+                    ftp_host, ftp_port, ftp_user, ftp_password, export_path,
+                )
+                duration_ms = round((time.monotonic() - store_start) * 1000, 2)
+                logger.info("Return sale export store %s: %s rows → %s", store_no, written_rows, return_filename)
+                async with get_session() as session:
+                    async with session.begin():
+                        await write_log(session, activity_type="sales_export", status="success",
+                                        details=f"Return Sale Export Store {store_no}: {written_rows} rows → {return_filename}",
+                                        duration_ms=duration_ms,
+                                        metadata={"run_id": run_id, "store_no": store_no, "type": "return_sale",
+                                                  "written_rows": written_rows, "filename": return_filename})
+                results.append({"store_no": store_no, "type": "return_sale", "status": "success",
+                                 "written_rows": written_rows, "filename": return_filename})
+            except Exception as exc:
+                duration_ms = round((time.monotonic() - store_start) * 1000, 2)
+                msg = f"Return Sale Export Store {store_no}: failed — {exc}"
+                logger.error(msg)
+                async with get_session() as session:
+                    async with session.begin():
+                        await write_log(session, activity_type="sales_export", status="failed",
+                                        details=msg, duration_ms=duration_ms,
+                                        metadata={"run_id": run_id, "store_no": store_no,
+                                                  "type": "return_sale", "error": str(exc)})
+                results.append({"store_no": store_no, "type": "return_sale", "status": "failed", "error": str(exc)})
 
     # ── Finalize run ─────────────────────────────────────────────────────────
     ok_count   = sum(1 for r in results if r["status"] == "success")

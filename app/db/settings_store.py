@@ -50,6 +50,9 @@ SETTING_DEFINITIONS = [
     # Sales Export
     ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),
+    # Return Sale Export
+    ("return_sale_sql",               "sales_export", "Return Sale SQL Query",        "", False),
+    ("return_sale_filename_prefix",   "sales_export", "Return Sale Filename Prefix",  "return_sale",  False),
     # Sales Export — dedicated Oracle connection (separate from the shared Oracle DB)
     ("sales_oracle_host",             "sales_export", "Oracle Host (Sales Export)",   "",     False),
     ("sales_oracle_port",             "sales_export", "Oracle Port (Sales Export)",   "1521", False),
