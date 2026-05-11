@@ -740,27 +740,29 @@ async def process_qty_adjustment_csv(
     }
 
     base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()
-    await sit_session(base_url, auth_session)
-
-    # Group rows by NOTE — each unique note = one adjustment document
-    note_groups: dict[str, list[dict]] = {}
-    for row in rows:
-        n = str(row.get("NOTE", "") or "").strip()
-        note_groups.setdefault(n, []).append(row)
-
-    store_sid_cache: dict = {}
-    sbs_sid_cache: dict = {}
-    item_info_cache: dict = {}
-    item_qty_cache: dict = {}
-
-    adj_reason_sid = await _get_adj_reason_sid(oc)
-    if not adj_reason_sid:
-        logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
+    auth_session: Optional[str] = None
 
     cancelled = False
     all_docs: list[dict] = []
     try:
+        auth_session = await get_auth_session()
+        await sit_session(base_url, auth_session)
+
+        # Group rows by NOTE — each unique note = one adjustment document
+        note_groups: dict[str, list[dict]] = {}
+        for row in rows:
+            n = str(row.get("NOTE", "") or "").strip()
+            note_groups.setdefault(n, []).append(row)
+
+        store_sid_cache: dict = {}
+        sbs_sid_cache: dict = {}
+        item_info_cache: dict = {}
+        item_qty_cache: dict = {}
+
+        adj_reason_sid = await _get_adj_reason_sid(oc)
+        if not adj_reason_sid:
+            logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
+
         _timeout = httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
@@ -787,10 +789,14 @@ async def process_qty_adjustment_csv(
                 )
                 all_docs.append(doc)
     finally:
-        await stand_session(base_url, auth_session)
         if _active_import_id == import_id:
             _active_import_id = None
         _cancel_requests.discard(import_id)
+        if auth_session:
+            try:
+                await stand_session(base_url, auth_session)
+            except Exception as _se:
+                logger.warning("[QtyAdj] stand_session failed during cleanup: %s", _se)
 
     total_docs   = len(all_docs)
     posted_docs  = sum(1 for d in all_docs if d.get("status") == "posted")
@@ -837,7 +843,8 @@ async def retry_qty_adj_doc(doc_id: str) -> dict:
     if not doc.raw_rows:
         raise ValueError("No raw CSV data stored for this document — cannot retry.")
 
-    base_url, auth_session = await get_auth_session()
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
         "port":         int((await get_setting("oracle_port"))     or "1521"),

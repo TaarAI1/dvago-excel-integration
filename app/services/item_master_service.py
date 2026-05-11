@@ -1018,21 +1018,24 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     }
 
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()
-
-    # Activate the session immediately after obtaining it
-    await sit_session(base_url, auth_session)
-
-    dcs_cache:          dict = {}
-    vend_cache:         dict = {}
-    tax_cache:          dict = {}
-    sbs_cache:          dict = {}
-    pref_reason_cache:  dict = {}
-    store_cache:        dict = {}
+    # Initialise to None so the finally block can safely skip stand_session if
+    # auth fails before auth_session is ever assigned.
+    auth_session: Optional[str] = None
 
     cancelled = False
     results: list[dict] = []
     try:
+        auth_session = await get_auth_session()
+        # Activate the session immediately after obtaining it
+        await sit_session(base_url, auth_session)
+
+        dcs_cache:          dict = {}
+        vend_cache:         dict = {}
+        tax_cache:          dict = {}
+        sbs_cache:          dict = {}
+        pref_reason_cache:  dict = {}
+        store_cache:        dict = {}
+
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
             for row in rows:
                 # Check for kill signal before each row
@@ -1069,11 +1072,16 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
                     "✓" if row_result["ok"] else f"✗ {row_result['error']}",
                 )
     finally:
-        # Always destroy the session and clear active state
-        await stand_session(base_url, auth_session)
+        # Always clear the active-import flag so the status endpoint never gets stuck.
         if _active_import_id == import_id:
             _active_import_id = None
         _cancel_requests.discard(import_id)
+        # Only tear-down the session if one was successfully created.
+        if auth_session:
+            try:
+                await stand_session(base_url, auth_session)
+            except Exception as _se:
+                logger.warning("stand_session failed during cleanup: %s", _se)
 
     created = sum(1 for r in results if r["ok"] and r["action"] == "created")
     updated = sum(1 for r in results if r["ok"] and r["action"] == "updated")
@@ -1236,7 +1244,8 @@ async def retry_item_master_doc(doc_id: str) -> dict:
         if k not in ("_payload_sent", "_dcs_debug", "_vend_debug")
     }
 
-    base_url, auth_session = await get_auth_session()
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
         "port":         int((await get_setting("oracle_port"))     or "1521"),

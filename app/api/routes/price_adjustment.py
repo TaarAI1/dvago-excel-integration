@@ -121,11 +121,14 @@ async def import_status(_: str = Depends(get_current_user)):
 
 @router.post("/kill")
 async def kill_import(_: str = Depends(get_current_user)):
-    """Cancel the running import — stops after the current store finishes."""
+    """Cancel the running import — stops after the current store finishes.
+    Also force-clears any stuck active-import state."""
     from app.services.price_adjustment_service import request_cancel_import, get_active_import_id
+    import app.services.price_adjustment_service as _svc
     active = get_active_import_id()
     if not active:
-        return {"cancelled": False, "message": "No import is currently running."}
+        _svc._active_import_id = None
+        return {"cancelled": False, "message": "No import is currently running (state cleared)."}
     request_cancel_import()
     return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current store completes."}
 

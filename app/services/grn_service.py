@@ -1084,7 +1084,8 @@ async def retry_grn_doc(doc_id: str) -> dict:
     if not doc.raw_rows:
         raise ValueError("No raw CSV data stored for this document — cannot retry.")
 
-    base_url, auth_session = await get_auth_session()
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
         "port":         int((await get_setting("oracle_port"))     or "1521"),
