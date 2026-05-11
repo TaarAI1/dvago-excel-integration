@@ -21,7 +21,7 @@ class SalesExportRun(Base):
 
 
 class SalesExportStore(Base):
-    """One row per store within an export run."""
+    """One row per store (or consolidated file) within an export run."""
     __tablename__ = "sales_export_stores"
 
     id:           Mapped[uuid.UUID] = mapped_column(
@@ -30,6 +30,7 @@ class SalesExportStore(Base):
     run_id:       Mapped[str]       = mapped_column(String(36), nullable=False, index=True)
     store_no:     Mapped[int | None]= mapped_column(Integer, nullable=True)
     store_name:   Mapped[str | None]= mapped_column(String(255), nullable=True)
+    file_type:    Mapped[str]       = mapped_column(String(30), default="sales", nullable=False)
     query_rows:   Mapped[int]       = mapped_column(Integer, default=0, nullable=False)
     written_rows: Mapped[int]       = mapped_column(Integer, default=0, nullable=False)
     filename:     Mapped[str | None]= mapped_column(String(500), nullable=True)
@@ -60,6 +61,7 @@ def store_to_response(s: SalesExportStore) -> dict:
         "run_id":       s.run_id,
         "store_no":     s.store_no,
         "store_name":   s.store_name,
+        "file_type":    s.file_type,
         "query_rows":   s.query_rows,
         "written_rows": s.written_rows,
         "filename":     s.filename,

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, Query, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import Optional
-from sqlalchemy import select, func
+from typing import Optional, List
+from sqlalchemy import select, func, and_
 
 from app.core.security import get_current_user
 from app.db.postgres import get_session
@@ -73,14 +73,22 @@ async def list_export_runs(
 
 
 @router.get("/runs/{run_id}/stores")
-async def get_run_stores(run_id: str, _: str = Depends(get_current_user)):
-    """Return all per-store rows for a given run."""
+async def get_run_stores(
+    run_id: str,
+    file_type: Optional[str] = Query(None, description="Filter by file type: 'sales' or 'return'"),
+    _: str = Depends(get_current_user),
+):
+    """Return per-store rows for a given run, optionally filtered by file_type."""
+    FILE_TYPE_GROUPS = {
+        "sales":  ["sales", "sales_consolidated"],
+        "return": ["return", "return_consolidated"],
+    }
     async with get_session() as session:
-        result = await session.execute(
-            select(SalesExportStore)
-            .where(SalesExportStore.run_id == run_id)
-            .order_by(SalesExportStore.store_no)
-        )
+        q = select(SalesExportStore).where(SalesExportStore.run_id == run_id)
+        if file_type and file_type in FILE_TYPE_GROUPS:
+            q = q.where(SalesExportStore.file_type.in_(FILE_TYPE_GROUPS[file_type]))
+        q = q.order_by(SalesExportStore.store_no)
+        result = await session.execute(q)
         stores = result.scalars().all()
     return {"run_id": run_id, "stores": [store_to_response(s) for s in stores]}
 

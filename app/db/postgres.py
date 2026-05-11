@@ -70,6 +70,10 @@ async def connect_db(database_url: str):
         await conn.execute(text(
             "ALTER TABLE grn_docs ADD COLUMN IF NOT EXISTS error_traceback TEXT"
         ))
+        # sales_export_stores — file type column
+        await conn.execute(text(
+            "ALTER TABLE sales_export_stores ADD COLUMN IF NOT EXISTS file_type VARCHAR(30) DEFAULT 'sales'"
+        ))
 
     logger.info("Connected to PostgreSQL and tables ensured.")
 

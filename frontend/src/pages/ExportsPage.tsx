@@ -268,7 +268,7 @@ function SalesExportTab() {
     stores: ExportStore[]
   }>({
     queryKey: ['export-stores', selectedRun],
-    queryFn: () => apiClient.get(`/api/sales-export/runs/${selectedRun}/stores`).then(r => r.data),
+    queryFn: () => apiClient.get(`/api/sales-export/runs/${selectedRun}/stores?file_type=sales`).then(r => r.data),
     enabled: !!selectedRun,
     refetchInterval: 8_000,
   })
@@ -523,6 +523,196 @@ function SalesExportTab() {
   )
 }
 
+// ── Returns Export tab ────────────────────────────────────────────────────────
+
+function ReturnExportTab() {
+  const qc = useQueryClient()
+  const [selectedRun, setSelectedRun] = useState('')
+  const [detail, setDetail]           = useState<ExportStore | null>(null)
+
+  const { data: runsData, isFetching: runsFetching } = useQuery<{ items: ExportRun[] }>({
+    queryKey: ['export-runs'],
+    queryFn: () => apiClient.get('/api/sales-export/runs').then(r => r.data),
+    refetchInterval: 15_000,
+  })
+  const runs = runsData?.items ?? []
+
+  useEffect(() => {
+    if (runs.length > 0 && !selectedRun)
+      setSelectedRun(runs[0].run_id)
+  }, [runs, selectedRun])
+
+  const activeRun = runs.find(r => r.run_id === selectedRun)
+
+  const { data: storesData, isLoading: storesLoading, isFetching: storesFetching } = useQuery<{
+    stores: ExportStore[]
+  }>({
+    queryKey: ['return-stores', selectedRun],
+    queryFn: () => apiClient.get(`/api/sales-export/runs/${selectedRun}/stores?file_type=return`).then(r => r.data),
+    enabled: !!selectedRun,
+    refetchInterval: 8_000,
+  })
+  const stores = storesData?.stores ?? []
+
+  const totalRows = stores.reduce((a, s) => a + s.written_rows, 0)
+  const okCount   = stores.filter(s => s.status === 'success').length
+  const skipCount = stores.filter(s => s.status === 'skipped').length
+  const failCount = stores.filter(s => s.status === 'failed').length
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        <FolderOutlinedIcon sx={{ fontSize: 15, color: '#9ca3af' }} />
+        <Typography sx={{ fontSize: '0.72rem', color: '#374151', fontWeight: 600 }}>Batch:</Typography>
+        <FormControl size="small" sx={{ minWidth: 300 }}>
+          <Select value={selectedRun} displayEmpty
+            onChange={e => setSelectedRun(e.target.value)}
+            sx={{ fontSize: '0.78rem' }}
+            renderValue={v => {
+              if (!v) return <em style={{ color: '#9ca3af' }}>Select an export run…</em>
+              const r = runs.find(x => x.run_id === v)
+              if (!r) return v
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>{r.label}</span>
+                  <StatusBadge status={r.status} />
+                </Box>
+              )
+            }}>
+            {runs.map(r => (
+              <MenuItem key={r.run_id} value={r.run_id}>
+                <Box sx={{ width: '100%' }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 500 }}>{r.label}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <StatusBadge status={r.status} />
+                      <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>
+                        {fmtDateTime(r.started_at)}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {(runsFetching || storesFetching) && <CircularProgress size={12} />}
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="Refresh">
+          <IconButton size="small"
+            onClick={() => {
+              qc.invalidateQueries({ queryKey: ['export-runs'] })
+              qc.invalidateQueries({ queryKey: ['return-stores', selectedRun] })
+            }}
+            sx={{ borderRadius: '4px', border: '1px solid #e5e7eb' }}>
+            <RefreshIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
+        {[
+          { label: 'uploaded',     val: okCount,   color: '#22c55e' },
+          { label: 'no data',      val: skipCount, color: '#f59e0b' },
+          { label: 'failed',       val: failCount, color: '#ef4444' },
+          { label: 'rows written', val: totalRows, color: '#3b82f6' },
+        ].map(p => (
+          <Box key={p.label} sx={{ display: 'flex', alignItems: 'center', gap: 0.75,
+            px: 1.5, py: 0.5, border: '1px solid #e5e7eb', borderRadius: '6px', bgcolor: 'white' }}>
+            <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: p.color }} />
+            <Typography sx={{ fontSize: '0.72rem', color: '#374151' }}>
+              <b>{p.val}</b> {p.label}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+
+      <Box sx={{ bgcolor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', overflow: 'hidden' }}>
+        <TableContainer>
+          <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 860 }}>
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#f9fafb' }}>
+                <TableCell sx={thSx} width={50}>#</TableCell>
+                <TableCell sx={thSx} width={80}>Store</TableCell>
+                <TableCell sx={thSx}>Store Name</TableCell>
+                <TableCell sx={thSx} width={90} align="center">Query Rows</TableCell>
+                <TableCell sx={thSx} width={90} align="center">Written</TableCell>
+                <TableCell sx={thSx} width={80}>Status</TableCell>
+                <TableCell sx={thSx}>Filename</TableCell>
+                <TableCell sx={thSx} width={90} align="right">Duration</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {!selectedRun ? (
+                <TableRow>
+                  <TableCell colSpan={8} align="center"
+                    sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
+                    Select an export run above to view return results.
+                  </TableCell>
+                </TableRow>
+              ) : storesLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
+                    <CircularProgress size={22} />
+                  </TableCell>
+                </TableRow>
+              ) : stores.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} align="center">
+                    {activeRun?.status === 'failed' && activeRun.error_message ? (
+                      <Box sx={{ maxWidth: 620, mx: 'auto', textAlign: 'left', p: 2 }}>
+                        <Box sx={{ bgcolor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', p: 1.5 }}>
+                          <Typography sx={{ fontSize: '0.72rem', fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap', color: '#7f1d1d' }}>
+                            {activeRun.error_message}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#9ca3af', fontSize: '0.82rem', py: 4 }}>
+                        No return records for this run — return SQL may not be configured yet.
+                      </Typography>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ) : stores.map((s, i) => (
+                <TableRow key={s.id} onClick={() => setDetail(s)}
+                  sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#fdf4ff' }, transition: 'background 0.1s' }}>
+                  <TableCell sx={tdSx}>{i + 1}</TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontWeight: 600 }}>
+                    {s.store_no ?? 'ALL'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.store_name || '—'}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', fontFamily: 'monospace' }}>
+                    {s.query_rows}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'center', fontFamily: 'monospace',
+                    color: s.written_rows > 0 ? '#15803d' : '#9ca3af', fontWeight: s.written_rows > 0 ? 600 : 400 }}>
+                    {s.written_rows}
+                  </TableCell>
+                  <TableCell sx={tdSx}><StatusBadge status={s.status} /></TableCell>
+                  <TableCell sx={{ ...tdSx, fontFamily: 'monospace', fontSize: '0.68rem',
+                    color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.filename || (s.status === 'skipped' ? 'No file — no data' : '—')}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, textAlign: 'right', color: '#9ca3af', fontFamily: 'monospace',
+                    fontSize: '0.68rem', whiteSpace: 'nowrap' }}>
+                    {s.duration_ms != null ? `${s.duration_ms.toFixed(0)} ms` : '—'}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+
+      <StoreDetailDialog store={detail} onClose={() => setDetail(null)} />
+    </Box>
+  )
+}
+
 // ── Manual Export tab ─────────────────────────────────────────────────────────
 
 interface StoreOption {
@@ -723,11 +913,13 @@ export default function ExportsPage() {
             '& .Mui-selected': { color: '#1a56db', fontWeight: 600 },
           }}>
           <Tab label="Sales Export" />
+          <Tab label="Returns Export" />
           <Tab label="Manual Export" />
         </Tabs>
         <Box sx={{ p: { xs: 1.5, sm: 2.5 } }}>
           {tab === 0 && <SalesExportTab />}
-          {tab === 1 && <ManualExportTab />}
+          {tab === 1 && <ReturnExportTab />}
+          {tab === 2 && <ManualExportTab />}
         </Box>
       </Box>
     </Box>
