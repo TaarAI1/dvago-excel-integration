@@ -1,5 +1,5 @@
 """
-Quantity Adjustment routes.
+Quantity Adjustment routes. 
 
 GET  /api/qty-adjustment/batches   – one row per source_file with counts
 GET  /api/qty-adjustment/docs      – paginated list of adjustment documents
