@@ -100,7 +100,29 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 // ── Detail dialog ─────────────────────────────────────────────────────────────
 
-function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => void }) {
+function DetailDialog({ doc, onClose, onRetrySuccess }: {
+  doc: DocItem | null
+  onClose: () => void
+  onRetrySuccess?: (updated: DocItem) => void
+}) {
+  const [retrying, setRetrying] = useState(false)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
+
+  const handleRetry = async () => {
+    if (!doc) return
+    setRetrying(true)
+    setRetryErr(null)
+    try {
+      const res = await apiClient.post(`/api/item-master/docs/${doc.id}/retry`)
+      onRetrySuccess?.(res.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Retry failed'
+      setRetryErr(msg)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (!doc) return null
 
   const upc  = cell(doc, 'UPC')
@@ -277,11 +299,23 @@ function DetailDialog({ doc, onClose }: { doc: DocItem | null; onClose: () => vo
         )}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
-        <Button size="small" variant="outlined" onClick={onClose}
-          sx={{ height: 30, fontSize: '0.78rem' }}>
-          Close
-        </Button>
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6', flexDirection: 'column', alignItems: 'stretch', gap: 0.75 }}>
+        {retryErr && (
+          <Alert severity="error" sx={{ fontSize: '0.75rem', py: 0.25 }}>{retryErr}</Alert>
+        )}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          {doc.has_error && (
+            <Button size="small" variant="contained" disabled={retrying} onClick={handleRetry}
+              sx={{ height: 30, fontSize: '0.78rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              {retrying ? <><CircularProgress size={11} sx={{ color: 'white', mr: 0.75 }} />Retrying…</> : 'Retry'}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ height: 30, fontSize: '0.78rem' }}>
+            Close
+          </Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )
@@ -680,7 +714,15 @@ function ItemMasterTab() {
         )}
       </Box>
 
-      <DetailDialog doc={detail} onClose={() => setDetail(null)} />
+      <DetailDialog
+        doc={detail}
+        onClose={() => setDetail(null)}
+        onRetrySuccess={(updated) => {
+          setDetail(updated)
+          qc.invalidateQueries({ queryKey: ['imports-im'] })
+          qc.invalidateQueries({ queryKey: ['im-batches'] })
+        }}
+      />
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
@@ -761,7 +803,29 @@ function AdjStatusChip({ status }: { status: QtyAdjDoc['status'] }) {
 
 // ── QTY Adj detail dialog ─────────────────────────────────────────────────────
 
-function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: () => void }) {
+function QtyAdjDetailDialog({ doc, onClose, onRetrySuccess }: {
+  doc: QtyAdjDoc | null
+  onClose: () => void
+  onRetrySuccess?: (updated: QtyAdjDoc) => void
+}) {
+  const [retrying, setRetrying] = useState(false)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
+
+  const handleRetry = async () => {
+    if (!doc) return
+    setRetrying(true)
+    setRetryErr(null)
+    try {
+      const res = await apiClient.post(`/api/qty-adjustment/docs/${doc.id}/retry`)
+      onRetrySuccess?.(res.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Retry failed'
+      setRetryErr(msg)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (!doc) return null
 
   const section = (title: string, data: unknown, color = '#1e293b') => {
@@ -888,9 +952,19 @@ function QtyAdjDetailDialog({ doc, onClose }: { doc: QtyAdjDoc | null; onClose: 
         {section('5. Post Comment — Response', doc.api_comment_response)}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
-        <Button size="small" variant="outlined" onClick={onClose}
-          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6', flexDirection: 'column', alignItems: 'stretch', gap: 0.75 }}>
+        {retryErr && <Alert severity="error" sx={{ fontSize: '0.75rem', py: 0.25 }}>{retryErr}</Alert>}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          {doc.status === 'error' && (
+            <Button size="small" variant="contained" disabled={retrying} onClick={handleRetry}
+              sx={{ height: 30, fontSize: '0.78rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              {retrying ? <><CircularProgress size={11} sx={{ color: 'white', mr: 0.75 }} />Retrying…</> : 'Retry'}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )
@@ -1180,7 +1254,15 @@ function QtyAdjustmentTab() {
         )}
       </Box>
 
-      <QtyAdjDetailDialog doc={detail} onClose={() => setDetail(null)} />
+      <QtyAdjDetailDialog
+        doc={detail}
+        onClose={() => setDetail(null)}
+        onRetrySuccess={(updated) => {
+          setDetail(updated)
+          qc.invalidateQueries({ queryKey: ['qa-docs'] })
+          qc.invalidateQueries({ queryKey: ['qa-batches'] })
+        }}
+      />
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
@@ -1237,7 +1319,29 @@ interface PriceAdjBatch {
 
 // ── Price Adj detail dialog ───────────────────────────────────────────────────
 
-function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClose: () => void }) {
+function PriceAdjDetailDialog({ doc, onClose, onRetrySuccess }: {
+  doc: PriceAdjDoc | null
+  onClose: () => void
+  onRetrySuccess?: (updated: PriceAdjDoc) => void
+}) {
+  const [retrying, setRetrying] = useState(false)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
+
+  const handleRetry = async () => {
+    if (!doc) return
+    setRetrying(true)
+    setRetryErr(null)
+    try {
+      const res = await apiClient.post(`/api/price-adjustment/docs/${doc.id}/retry`)
+      onRetrySuccess?.(res.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Retry failed'
+      setRetryErr(msg)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (!doc) return null
 
   const section = (title: string, data: unknown, color = '#1e293b') => {
@@ -1386,9 +1490,19 @@ function PriceAdjDetailDialog({ doc, onClose }: { doc: PriceAdjDoc | null; onClo
         {section('Step 5 — Post Comment · Response',      doc.api_comment_response)}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
-        <Button size="small" variant="outlined" onClick={onClose}
-          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6', flexDirection: 'column', alignItems: 'stretch', gap: 0.75 }}>
+        {retryErr && <Alert severity="error" sx={{ fontSize: '0.75rem', py: 0.25 }}>{retryErr}</Alert>}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          {doc.status === 'error' && (
+            <Button size="small" variant="contained" disabled={retrying} onClick={handleRetry}
+              sx={{ height: 30, fontSize: '0.78rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              {retrying ? <><CircularProgress size={11} sx={{ color: 'white', mr: 0.75 }} />Retrying…</> : 'Retry'}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )
@@ -1677,7 +1791,15 @@ function PriceAdjustmentTab() {
         )}
       </Box>
 
-      <PriceAdjDetailDialog doc={detail} onClose={() => setDetail(null)} />
+      <PriceAdjDetailDialog
+        doc={detail}
+        onClose={() => setDetail(null)}
+        onRetrySuccess={(updated) => {
+          setDetail(updated)
+          qc.invalidateQueries({ queryKey: ['pa-docs'] })
+          qc.invalidateQueries({ queryKey: ['pa-batches'] })
+        }}
+      />
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
@@ -1739,7 +1861,29 @@ interface TransferSlipBatch {
 
 // ── Transfer Slip detail dialog ───────────────────────────────────────────────
 
-function TransferSlipDetailDialog({ doc, onClose }: { doc: TransferSlipDoc | null; onClose: () => void }) {
+function TransferSlipDetailDialog({ doc, onClose, onRetrySuccess }: {
+  doc: TransferSlipDoc | null
+  onClose: () => void
+  onRetrySuccess?: (updated: TransferSlipDoc) => void
+}) {
+  const [retrying, setRetrying] = useState(false)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
+
+  const handleRetry = async () => {
+    if (!doc) return
+    setRetrying(true)
+    setRetryErr(null)
+    try {
+      const res = await apiClient.post(`/api/transfer-slip/docs/${doc.id}/retry`)
+      onRetrySuccess?.(res.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Retry failed'
+      setRetryErr(msg)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (!doc) return null
 
   const section = (title: string, data: unknown) => {
@@ -1880,9 +2024,19 @@ function TransferSlipDetailDialog({ doc, onClose }: { doc: TransferSlipDoc | nul
         {section('7. Verify — Response',         doc.api_verify_response)}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
-        <Button size="small" variant="outlined" onClick={onClose}
-          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6', flexDirection: 'column', alignItems: 'stretch', gap: 0.75 }}>
+        {retryErr && <Alert severity="error" sx={{ fontSize: '0.75rem', py: 0.25 }}>{retryErr}</Alert>}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          {doc.status === 'error' && (
+            <Button size="small" variant="contained" disabled={retrying} onClick={handleRetry}
+              sx={{ height: 30, fontSize: '0.78rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              {retrying ? <><CircularProgress size={11} sx={{ color: 'white', mr: 0.75 }} />Retrying…</> : 'Retry'}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )
@@ -2177,7 +2331,15 @@ function TransferSlipTab() {
         )}
       </Box>
 
-      <TransferSlipDetailDialog doc={detail} onClose={() => setDetail(null)} />
+      <TransferSlipDetailDialog
+        doc={detail}
+        onClose={() => setDetail(null)}
+        onRetrySuccess={(updated) => {
+          setDetail(updated)
+          qc.invalidateQueries({ queryKey: ['ts-docs'] })
+          qc.invalidateQueries({ queryKey: ['ts-batches'] })
+        }}
+      />
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
@@ -2238,7 +2400,29 @@ interface GRNBatch {
 
 // ── GRN detail dialog ─────────────────────────────────────────────────────────
 
-function GRNDetailDialog({ doc, onClose }: { doc: GRNDoc | null; onClose: () => void }) {
+function GRNDetailDialog({ doc, onClose, onRetrySuccess }: {
+  doc: GRNDoc | null
+  onClose: () => void
+  onRetrySuccess?: (updated: GRNDoc) => void
+}) {
+  const [retrying, setRetrying] = useState(false)
+  const [retryErr, setRetryErr] = useState<string | null>(null)
+
+  const handleRetry = async () => {
+    if (!doc) return
+    setRetrying(true)
+    setRetryErr(null)
+    try {
+      const res = await apiClient.post(`/api/grn/docs/${doc.id}/retry`)
+      onRetrySuccess?.(res.data)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Retry failed'
+      setRetryErr(msg)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (!doc) return null
 
   const section = (title: string, data: unknown) => {
@@ -2378,9 +2562,19 @@ function GRNDetailDialog({ doc, onClose }: { doc: GRNDoc | null; onClose: () => 
         {section('7. Finalize — Response',           doc.api_finalize_response)}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6' }}>
-        <Button size="small" variant="outlined" onClick={onClose}
-          sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+      <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f3f4f6', flexDirection: 'column', alignItems: 'stretch', gap: 0.75 }}>
+        {retryErr && <Alert severity="error" sx={{ fontSize: '0.75rem', py: 0.25 }}>{retryErr}</Alert>}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          {doc.status === 'error' && (
+            <Button size="small" variant="contained" disabled={retrying} onClick={handleRetry}
+              sx={{ height: 30, fontSize: '0.78rem', textTransform: 'none',
+                bgcolor: '#1a56db', '&:hover': { bgcolor: '#1e40af' } }}>
+              {retrying ? <><CircularProgress size={11} sx={{ color: 'white', mr: 0.75 }} />Retrying…</> : 'Retry'}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" onClick={onClose}
+            sx={{ height: 30, fontSize: '0.78rem' }}>Close</Button>
+        </Box>
       </DialogActions>
     </Dialog>
   )
@@ -2676,7 +2870,15 @@ function GRNTab() {
         )}
       </Box>
 
-      <GRNDetailDialog doc={detail} onClose={() => setDetail(null)} />
+      <GRNDetailDialog
+        doc={detail}
+        onClose={() => setDetail(null)}
+        onRetrySuccess={(updated) => {
+          setDetail(updated)
+          qc.invalidateQueries({ queryKey: ['grn-docs'] })
+          qc.invalidateQueries({ queryKey: ['grn-batches'] })
+        }}
+      />
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>

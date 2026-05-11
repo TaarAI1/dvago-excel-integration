@@ -514,8 +514,40 @@ async def _persist_grn_doc(doc_data: dict) -> None:
     from app.db.postgres import get_session
     from app.models.grn_doc import GRNDoc
 
+    existing_id = doc_data.get("_existing_id")
+
     async with get_session() as session:
         async with session.begin():
+            if existing_id:
+                doc = await session.get(GRNDoc, existing_id)
+                if doc:
+                    doc.storesid                   = doc_data.get("storesid")
+                    doc.sbssid                     = doc_data.get("sbssid")
+                    doc.vendsid                    = doc_data.get("vendsid")
+                    doc.vousid                     = doc_data.get("vousid")
+                    doc.item_count                 = doc_data.get("item_count", 0)
+                    doc.posted_count               = doc_data.get("posted_count", 0)
+                    doc.error_count                = doc_data.get("error_count", 0)
+                    doc.status                     = doc_data.get("status", "pending")
+                    doc.error_message              = doc_data.get("error_message")
+                    doc.error_traceback            = doc_data.get("error_traceback")
+                    doc.api_create_payload         = doc_data.get("api_create_payload")
+                    doc.api_create_response        = doc_data.get("api_create_response")
+                    doc.api_get_rowversion_response= doc_data.get("api_get_rowversion_response")
+                    doc.api_vendor_payload         = doc_data.get("api_vendor_payload")
+                    doc.api_vendor_response        = doc_data.get("api_vendor_response")
+                    doc.api_items_payload          = doc_data.get("api_items_payload")
+                    doc.api_items_response         = doc_data.get("api_items_response")
+                    doc.api_comment_payload        = doc_data.get("api_comment_payload")
+                    doc.api_comment_response       = doc_data.get("api_comment_response")
+                    doc.api_get_rowversion2_response = doc_data.get("api_get_rowversion2_response")
+                    doc.api_finalize_payload       = doc_data.get("api_finalize_payload")
+                    doc.api_finalize_response      = doc_data.get("api_finalize_response")
+                    doc.items_data                 = doc_data.get("items_data")
+                    doc.raw_rows                   = doc_data.get("raw_rows")
+                    if doc_data.get("status") == "posted":
+                        doc.posted_at = now_pkt()
+                    return
             doc = GRNDoc(
                 id=_uuid.uuid4(),
                 source_file=doc_data.get("source_file"),
@@ -545,6 +577,7 @@ async def _persist_grn_doc(doc_data: dict) -> None:
                 api_finalize_payload=doc_data.get("api_finalize_payload"),
                 api_finalize_response=doc_data.get("api_finalize_response"),
                 items_data=doc_data.get("items_data"),
+                raw_rows=doc_data.get("raw_rows"),
                 posted_at=now_pkt() if doc_data.get("status") == "posted" else None,
             )
             session.add(doc)
@@ -563,6 +596,7 @@ async def _process_note_group(
     store_cache: dict,
     vendor_cache: dict,
     item_info_cache: dict,
+    existing_doc_id=None,
 ) -> list[dict]:
     """
     Process all rows for a single note group.
@@ -594,6 +628,8 @@ async def _process_note_group(
             "status": "error",
             "error_message": f"Store SID not found in Oracle for store_code='{store_code}'",
             "items_data": [],
+            "raw_rows": rows,
+            "_existing_id": existing_doc_id,
         }
         await _persist_grn_doc(err_doc)
         return [err_doc]
@@ -616,6 +652,8 @@ async def _process_note_group(
             "status": "error",
             "error_message": f"Vendor SID not found in Oracle for vend_id='{vendor_code}'",
             "items_data": [],
+            "raw_rows": rows,
+            "_existing_id": existing_doc_id,
         }
         await _persist_grn_doc(err_doc)
         return [err_doc]
@@ -674,12 +712,16 @@ async def _process_note_group(
                 "Group was not processed — see item details for per-item errors."
             ),
             "items_data": items_detail,
+            "raw_rows": rows,
+            "_existing_id": existing_doc_id,
         }
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
     # All items valid — chunk into batches of GRN_ITEM_LIMIT
     chunks = [items_detail[i:i + GRN_ITEM_LIMIT] for i in range(0, len(items_detail), GRN_ITEM_LIMIT)]
+    # Map each chunk back to corresponding source rows for retry support
+    chunk_rows = [rows[i:i + GRN_ITEM_LIMIT] for i in range(0, len(rows), GRN_ITEM_LIMIT)]
 
     for chunk_idx, chunk in enumerate(chunks):
         doc_data: dict = {
@@ -697,6 +739,8 @@ async def _process_note_group(
             "status": "error",
             "error_message": None,
             "items_data": list(chunk),
+            "raw_rows": chunk_rows[chunk_idx] if chunk_idx < len(chunk_rows) else rows,
+            "_existing_id": existing_doc_id if len(chunks) == 1 else None,
         }
 
         try:
@@ -1013,3 +1057,54 @@ async def process_grn_csv(
         "total_items":  total_items,
         "posted_items": posted_items,
     }
+
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+async def retry_grn_doc(doc_id: str) -> dict:
+    """Re-run the full pipeline for a single failed GRN doc."""
+    import uuid as _uuid_mod
+    from app.db.postgres import get_session
+    from app.models.grn_doc import GRNDoc
+    from app.services.retailpro_auth import get_auth_session
+    from app.db.settings_store import get_setting
+
+    try:
+        oid = _uuid_mod.UUID(doc_id)
+    except ValueError:
+        raise ValueError("Invalid document ID.")
+
+    async with get_session() as session:
+        doc = await session.get(GRNDoc, oid)
+
+    if not doc:
+        raise ValueError("Document not found.")
+    if doc.status == "posted":
+        raise ValueError("Document is already posted.")
+    if not doc.raw_rows:
+        raise ValueError("No raw CSV data stored for this document — cannot retry.")
+
+    base_url, auth_session = await get_auth_session()
+    oc = {
+        "host":         (await get_setting("oracle_host"))         or "",
+        "port":         int((await get_setting("oracle_port"))     or "1521"),
+        "service_name": (await get_setting("oracle_service_name")) or "",
+        "username":     (await get_setting("oracle_username"))     or "",
+        "password":     (await get_setting("oracle_password"))     or "",
+    }
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        results = await _process_note_group(
+            note=doc.note or "",
+            rows=doc.raw_rows,
+            source_file=doc.source_file or "retry",
+            base_url=base_url,
+            auth_session=auth_session,
+            http=http,
+            oc=oc,
+            store_cache={},
+            vendor_cache={},
+            item_info_cache={},
+            existing_doc_id=oid,
+        )
+    return results[0] if results else {"status": "error", "error_message": "No result returned"}

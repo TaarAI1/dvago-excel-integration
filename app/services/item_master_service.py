@@ -1200,3 +1200,94 @@ async def process_csv_batch(file_bytes: bytes, source_file: str = "item_master_i
     """Parse a CSV file and run the full item master pipeline."""
     rows = parse_csv_item_master(file_bytes)
     return await _run_rows_batch(rows, source_file)
+
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+async def retry_item_master_doc(doc_id: str) -> dict:
+    """Re-process a single failed Item Master document using its stored original_data."""
+    import uuid as _uuid_mod
+    import json as _json
+    from app.db.postgres import get_session
+    from app.models.document import Document
+    from app.services.retailpro_auth import get_auth_session
+    from app.db.settings_store import get_setting
+
+    try:
+        oid = _uuid_mod.UUID(doc_id)
+    except ValueError:
+        raise ValueError("Invalid document ID.")
+
+    async with get_session() as session:
+        doc = await session.get(Document, oid)
+
+    if not doc:
+        raise ValueError("Document not found.")
+    if doc.document_type != "item_master":
+        raise ValueError("Document is not an item master document.")
+    if doc.posted:
+        raise ValueError("Document is already posted.")
+    if not doc.original_data:
+        raise ValueError("No original data stored for this document — cannot retry.")
+
+    # Reconstruct the raw row from original_data, stripping debug-only keys
+    row = {
+        k: v for k, v in doc.original_data.items()
+        if k not in ("_payload_sent", "_dcs_debug", "_vend_debug")
+    }
+
+    base_url, auth_session = await get_auth_session()
+    oc = {
+        "host":         (await get_setting("oracle_host"))         or "",
+        "port":         int((await get_setting("oracle_port"))     or "1521"),
+        "service_name": (await get_setting("oracle_service_name")) or "",
+        "username":     (await get_setting("oracle_username"))     or "",
+        "password":     (await get_setting("oracle_password"))     or "",
+    }
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        result = await process_row(
+            row=row,
+            auth_session=auth_session,
+            oc=oc,
+            base_url=base_url,
+            http=http,
+            dcs_cache={},
+            vend_cache={},
+            tax_cache={},
+            sbs_cache={},
+            pref_reason_cache={},
+            store_cache={},
+        )
+
+    ok = result.get("ok", False)
+    error_msg = result.get("error")
+    safe_row = {k: (_to_json(v)) for k, v in row.items()}
+
+    if ok and result.get("resp_upc") and not safe_row.get("UPC"):
+        safe_row["UPC"] = result["resp_upc"]
+    if not ok and result.get("_payload_sent"):
+        safe_row["_payload_sent"] = _json.dumps(result["_payload_sent"], indent=2, ensure_ascii=False)
+    if result.get("_dcs_debug"):
+        safe_row["_dcs_debug"] = _json.dumps(result["_dcs_debug"], indent=2, ensure_ascii=False)
+    if result.get("_vend_debug"):
+        safe_row["_vend_debug"] = _json.dumps(result["_vend_debug"], indent=2, ensure_ascii=False)
+
+    async with get_session() as session:
+        async with session.begin():
+            d = await session.get(Document, oid)
+            if d:
+                d.original_data = safe_row
+                d.retailprosid  = result.get("sid") if ok else None
+                d.posted        = ok
+                d.has_error     = not ok
+                d.error_message = error_msg
+                d.posted_at     = now_pkt() if ok else None
+
+    return {
+        "ok": ok,
+        "upc": result.get("upc"),
+        "action": result.get("action"),
+        "sid": result.get("sid"),
+        "error": error_msg,
+    }

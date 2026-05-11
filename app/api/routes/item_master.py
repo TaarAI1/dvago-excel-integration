@@ -254,3 +254,36 @@ async def download_batch_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
     )
+
+
+@router.post("/docs/{doc_id}/retry")
+async def retry_item_master_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed Item Master document using its stored data."""
+    from app.services.item_master_service import retry_item_master_doc
+    from app.db.postgres import get_session
+    from app.models.document import Document
+    import uuid
+    try:
+        result = await retry_item_master_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Item master retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    async with get_session() as session:
+        doc = await session.get(Document, uuid.UUID(doc_id))
+    if not doc:
+        return result
+    return {
+        "id": str(doc.id),
+        "document_type": doc.document_type,
+        "original_data": doc.original_data,
+        "retailprosid": doc.retailprosid,
+        "posted": doc.posted,
+        "has_error": doc.has_error,
+        "error_message": doc.error_message,
+        "source_file": doc.source_file,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "posted_at": doc.posted_at.isoformat() if doc.posted_at else None,
+    }

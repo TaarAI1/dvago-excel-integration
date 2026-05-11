@@ -134,6 +134,24 @@ async def get_transfer_slip_doc(doc_id: str, _: str = Depends(get_current_user))
     return transfer_slip_doc_to_response(doc)
 
 
+@router.post("/docs/{doc_id}/retry")
+async def retry_transfer_slip_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed Transfer Slip document."""
+    from app.services.transfer_slip_service import retry_transfer_slip_doc
+    import uuid
+    try:
+        result = await retry_transfer_slip_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Transfer slip retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    async with get_session() as session:
+        doc = await session.get(TransferSlipDoc, uuid.UUID(doc_id))
+    return transfer_slip_doc_to_response(doc) if doc else result
+
+
 @router.post("/import")
 async def import_transfer_slip(
     file: UploadFile = File(...),

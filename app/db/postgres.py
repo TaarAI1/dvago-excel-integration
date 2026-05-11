@@ -74,6 +74,19 @@ async def connect_db(database_url: str):
         await conn.execute(text(
             "ALTER TABLE sales_export_stores ADD COLUMN IF NOT EXISTS file_type VARCHAR(30) DEFAULT 'sales'"
         ))
+        # raw_rows for retry support across all *_docs tables
+        await conn.execute(text(
+            "ALTER TABLE qty_adjustment_docs ADD COLUMN IF NOT EXISTS raw_rows JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE price_adjustment_docs ADD COLUMN IF NOT EXISTS raw_rows JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE transfer_slip_docs ADD COLUMN IF NOT EXISTS raw_rows JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE grn_docs ADD COLUMN IF NOT EXISTS raw_rows JSONB"
+        ))
 
     logger.info("Connected to PostgreSQL and tables ensured.")
 
