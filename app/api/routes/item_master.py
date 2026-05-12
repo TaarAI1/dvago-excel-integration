@@ -246,8 +246,9 @@ async def download_batch_csv(
 
     for doc in docs:
         row = {k: v for k, v in (doc.original_data or {}).items() if k not in SKIP_KEYS}
-        # Failed items get a blank UPC regardless of what was in the source file
-        if not doc.posted:
+        # Blank UPC only when there was genuinely no UPC in the source data
+        # and RetailPro could not assign one (i.e. item failed with no UPC at all).
+        if not doc.posted and not str(row.get("UPC") or "").strip():
             row["UPC"] = ""
         writer.writerow(row)
 
