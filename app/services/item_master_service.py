@@ -754,6 +754,16 @@ def build_payload(
 
 # ── Per-row processor ───────────────────────────────────────────────────────────
 
+def _is_inactive_error(resp_json: dict) -> bool:
+    """Return True when RetailPro refuses the save because the item is inactive."""
+    errors = resp_json.get("errors") or []
+    return any(
+        (e.get("errorcode") or "") == "Inventory.21"
+        or "inactive item cannot be changed" in (e.get("errormsg") or "").lower()
+        for e in errors
+    )
+
+
 async def process_row(
     row: dict,
     auth_session: str,
@@ -864,6 +874,62 @@ async def process_row(
 
         # Success: errors is null AND data array is non-empty
         ok = (api_errors is None) and (len(saved_data) > 0)
+
+        # ── 7b. Inactive-item recovery ───────────────────────────────────────
+        # If RetailPro rejects the save because the item is inactive
+        # (Inventory.21), activate it first and then re-send the full payload.
+        if not ok and _is_inactive_error(save_json):
+            existing_for_act = check_data[0] if len(check_data) > 0 else None
+            item_sid_raw = existing_for_act.get("sid") if existing_for_act else None
+            if item_sid_raw is not None:
+                try:
+                    item_sid_int = int(str(item_sid_raw).split(".")[0])
+                except (ValueError, TypeError):
+                    item_sid_int = None
+
+                if item_sid_int is not None:
+                    # Build minimal activation payload from CSV fields
+                    act_primary: dict = {"sid": item_sid_int}
+                    for _json_k, _csv_col in [
+                        ("description1", "DESCRIPTION1"),
+                        ("description2", "DESCRIPTION2"),
+                        ("attribute",    "ATTRIBUTE"),
+                        ("itemsize",     "ITEM_SIZE"),
+                    ]:
+                        _val = str(row.get(_csv_col) or "").strip()
+                        if _val:
+                            act_primary[_json_k] = _val
+                    # Fallback: use DESCRIPTION if DESCRIPTION1 is absent
+                    if "description1" not in act_primary:
+                        _val = str(row.get("DESCRIPTION") or "").strip()
+                        if _val:
+                            act_primary["description1"] = _val
+
+                    act_payload = {
+                        "OriginApplication": "RProPrismWeb",
+                        "PrimaryItemDefinition": act_primary,
+                        "InventoryItems": [{"active": True, "sid": item_sid_int}],
+                    }
+                    act_resp = await http.post(
+                        f"{base_url}/api/backoffice/inventory",
+                        params={"action": "InventorySaveItems"},
+                        json={"data": [act_payload]},
+                        headers=rp_headers,
+                    )
+                    act_json = act_resp.json()
+                    act_ok = (act_json.get("errors") is None) and bool(act_json.get("data"))
+                    if act_ok:
+                        # Re-send the original full payload now that item is active
+                        save_resp = await http.post(
+                            f"{base_url}/api/backoffice/inventory",
+                            params={"action": "InventorySaveItems"},
+                            json={"data": [payload]},
+                            headers=rp_headers,
+                        )
+                        save_json = save_resp.json()
+                        saved_data = save_json.get("data") or []
+                        api_errors = save_json.get("errors")
+                        ok = (api_errors is None) and (len(saved_data) > 0)
 
         # Extract SID and UPC from the response
         sid = None
