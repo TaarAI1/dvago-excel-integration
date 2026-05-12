@@ -357,6 +357,18 @@ function ItemMasterTab() {
   const [status, setStatus]       = useState('')
   const [search, setSearch]       = useState('')
   const [detail, setDetail]       = useState<DocItem | null>(null)
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
+
+  const handleRowRetry = async (e: React.MouseEvent, doc: DocItem) => {
+    e.stopPropagation()
+    setRetryingIds(prev => new Set(prev).add(doc.id))
+    try {
+      await apiClient.post(`/api/item-master/docs/${doc.id}/retry`)
+      qc.invalidateQueries({ queryKey: ['imports-im'] })
+    } catch { /* ignore — row will refresh via query invalidation */ } finally {
+      setRetryingIds(prev => { const s = new Set(prev); s.delete(doc.id); return s })
+    }
+  }
   const [selectedBatch, setSelectedBatch] = useState<string>('')
   const [uploading, setUploading] = useState(false)
   const [killing, setKilling]     = useState(false)
@@ -641,25 +653,26 @@ function ItemMasterTab() {
                 <TableCell sx={thSx} width={80}>Status</TableCell>
                 <TableCell sx={thSx} width={150}>RetailPro SID</TableCell>
                 <TableCell sx={thSx} width={140}>Imported At</TableCell>
+                <TableCell sx={thSx} width={80}>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {!selectedBatch ? (
                 <TableRow>
-                  <TableCell colSpan={8} align="center"
+                  <TableCell colSpan={9} align="center"
                     sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
                     Select a batch above to view records.
                   </TableCell>
                 </TableRow>
               ) : isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                     <CircularProgress size={22} />
                   </TableCell>
                 </TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} align="center"
+                  <TableCell colSpan={9} align="center"
                     sx={{ py: 6, color: '#9ca3af', fontSize: '0.82rem' }}>
                     No records found.
                   </TableCell>
@@ -688,6 +701,23 @@ function ItemMasterTab() {
                   </TableCell>
                   <TableCell sx={{ ...tdSx, whiteSpace: 'nowrap', color: '#6b7280' }}>
                     {fmt(doc.created_at)}
+                  </TableCell>
+                  <TableCell sx={{ ...tdSx, py: 0.5 }} onClick={e => e.stopPropagation()}>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      disabled={retryingIds.has(doc.id)}
+                      onClick={e => handleRowRetry(e, doc)}
+                      sx={{
+                        bgcolor: '#dc2626', '&:hover': { bgcolor: '#b91c1c' },
+                        '&:disabled': { bgcolor: '#fca5a5', color: '#fff' },
+                        fontSize: '0.65rem', py: 0.25, px: 1, minWidth: 0,
+                        textTransform: 'none', boxShadow: 'none',
+                        borderRadius: '4px', fontWeight: 600,
+                      }}
+                    >
+                      {retryingIds.has(doc.id) ? <CircularProgress size={10} sx={{ color: '#fff' }} /> : 'Retry'}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
