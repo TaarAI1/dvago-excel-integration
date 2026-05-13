@@ -6,7 +6,7 @@ import {
   Select, MenuItem, FormControl, InputLabel, Chip,
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
+import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import FilterListIcon from '@mui/icons-material/FilterList'
 import { useQuery } from '@tanstack/react-query'
@@ -117,7 +117,7 @@ function ErrorDetailDialog({ entry, onClose }: { entry: ErrorEntry | null; onClo
       <Box sx={{ bgcolor: '#fef2f2', borderBottom: '2px solid #fecaca', px: 3, py: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ErrorOutlineIcon sx={{ fontSize: 16, color: '#b91c1c' }} />
+            <ErrorOutlinedIcon sx={{ fontSize: 16, color: '#b91c1c' }} />
             <StatusBadge status={entry.status} />
             <ActivityTypeBadge value={entry.activity_type} />
           </Box>
@@ -285,7 +285,7 @@ export default function ErrorLogsPage() {
       <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
         <Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ErrorOutlineIcon sx={{ fontSize: 18, color: '#b91c1c' }} />
+            <ErrorOutlinedIcon sx={{ fontSize: 18, color: '#b91c1c' }} />
             <Typography sx={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>
               Error Logs
             </Typography>
@@ -448,7 +448,7 @@ export default function ErrorLogsPage() {
                 <TableRow>
                   <TableCell colSpan={6} align="center" sx={{ py: 8 }}>
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                      <ErrorOutlineIcon sx={{ fontSize: 32, color: '#d1d5db' }} />
+                      <ErrorOutlinedIcon sx={{ fontSize: 32, color: '#d1d5db' }} />
                       <Typography sx={{ fontSize: '0.82rem', color: '#9ca3af' }}>
                         No errors found in the selected time range.
                       </Typography>
