@@ -640,9 +640,26 @@ export default function SettingsPage() {
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_from_email', 'From Email *', false, smtpErrors['smtp_from_email'])}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email',   'To Email *',   false, smtpErrors['smtp_to_email'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email',   'Default To Email *', false, smtpErrors['smtp_to_email'])}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_reply_to',   'Reply To')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_cc_email',   'CC Email')}</Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Per-Module Error Report Recipients</Typography>
+            </Divider>
+
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mb: 2 }}>
+              After each import finishes, a summary email with a CSV attachment of all errors is sent to the address below.
+              Leave blank to use the Default To Email above.
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_item_master',      'Item Master — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_qty_adjustment',   'Qty Adjustment — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_price_adjustment', 'Price Adjustment — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_transfer_slip',    'Transfer Slip — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_grn',              'GRN — Error Report Email')}</Grid>
             </Grid>
 
             <Divider sx={{ my: 2.5 }} />

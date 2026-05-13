@@ -66,9 +66,15 @@ SETTING_DEFINITIONS = [
     ("smtp_password",             "smtp",         "SMTP Password",               "",             True),
     ("smtp_use_tls",              "smtp",         "Use TLS",                     "true",         False),
     ("smtp_from_email",           "smtp",         "From Email",                  "",             False),
-    ("smtp_to_email",             "smtp",         "To Email",                    "",             False),
+    ("smtp_to_email",             "smtp",         "To Email (default)",          "",             False),
     ("smtp_reply_to",             "smtp",         "Reply To",                    "",             False),
     ("smtp_cc_email",             "smtp",         "CC Email",                    "",             False),
+    # Per-module error report recipients — fall back to smtp_to_email when blank
+    ("smtp_to_email_item_master",      "smtp", "Item Master — Error Report Email",       "", False),
+    ("smtp_to_email_qty_adjustment",   "smtp", "Qty Adjustment — Error Report Email",    "", False),
+    ("smtp_to_email_price_adjustment", "smtp", "Price Adjustment — Error Report Email",  "", False),
+    ("smtp_to_email_transfer_slip",    "smtp", "Transfer Slip — Error Report Email",     "", False),
+    ("smtp_to_email_grn",              "smtp", "GRN — Error Report Email",               "", False),
 ]
 
 
