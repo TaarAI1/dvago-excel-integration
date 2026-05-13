@@ -16,7 +16,7 @@ Processing pipeline (per note-group, up to 900 items per voucher):
             SELECT sid FROM rps.vendor WHERE vend_code = '{vendor_code}'
             → vendsid
       c. POST /api/backoffice/receiving   (note included directly in payload)
-            payload: {"data":[{…, "note": "{note}", "createddatetime": "…"}]}
+            payload: {"data":[{…, "note": "{note}"}]}
             → vousid
       d. GET  /api/backoffice/receiving?filter=(sid,eq,{vousid})
             → rowversion
@@ -337,11 +337,9 @@ async def _create_grn_doc(
 ) -> tuple[Optional[str], dict, dict]:
     """
     POST /api/backoffice/receiving
-    The note from the CSV is included directly in the create payload.
+    The note from the CSV is included directly in the create payload (no createddatetime).
     Returns (vousid, payload_sent, response_json).
     """
-    from app.core.timezone import now_pkt
-    createddatetime = now_pkt().strftime("%Y-%m-%dT%H:%M:%S.000+05:00")
     payload = {
         "data": [{
             "originapplication": "RProPrismWeb",
@@ -352,7 +350,6 @@ async def _create_grn_doc(
             "voutype": 0,
             "vouclass": 0,
             "verified": True,
-            "createddatetime": createddatetime,
             "note": note,
         }]
     }
