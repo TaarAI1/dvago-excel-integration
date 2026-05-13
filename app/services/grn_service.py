@@ -5,14 +5,18 @@ Processing pipeline (per note-group, up to 900 items per voucher):
   1.  Parse CSV — find header row, extract Store Code, upc, Vendor Code, note, totalqty
   2.  Skip rows missing upc or note
   3.  Group rows by note field
-  4.  For each note-group (chunked to 900 items per voucher):
+  4.  Duplicate check:
+        SELECT note FROM rps.voucher WHERE status = 4 AND note = '{note}'
+        → skip if already finalised
+  5.  For each note-group (chunked to 900 items per voucher):
       a. Oracle lookup for store:
             SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{store_code}'
             → storesid (sid), sbssid (sbs_sid)
       b. Oracle lookup for vendor:
             SELECT sid FROM rps.vendor WHERE vend_code = '{vendor_code}'
             → vendsid
-      c. POST /api/backoffice/receiving
+      c. POST /api/backoffice/receiving   (note included directly in payload)
+            payload: {"data":[{…, "note": "{note}", "createddatetime": "…"}]}
             → vousid
       d. GET  /api/backoffice/receiving?filter=(sid,eq,{vousid})
             → rowversion
@@ -21,10 +25,9 @@ Processing pipeline (per note-group, up to 900 items per voucher):
       f. Resolve each item SID:
             SELECT sid FROM rps.invn_sbs_item WHERE upc = '{upc}'
       g. POST /api/backoffice/receiving/{vousid}/recvitem   (all items, max 900)
-      h. POST /api/backoffice/receiving/{vousid}/recvcomment?comments={note}
-      i. GET  /api/backoffice/receiving?filter=(sid,eq,{vousid})  → updated rowversion
-      j. PUT  /api/backoffice/receiving/{vousid}  → status 4
-  5.  Persist each GRN document to grn_docs table
+      h. GET  /api/backoffice/receiving?filter=(sid,eq,{vousid})  → updated rowversion
+      i. PUT  /api/backoffice/receiving/{vousid}  → status 4
+  6.  Persist each GRN document to grn_docs table
 """
 import asyncio
 import csv
@@ -283,7 +286,11 @@ async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
 
 
 async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
-    """Return the set of notes already finalised in RetailPro (chunked to avoid ORA-01795)."""
+    """Return the set of notes already finalised in RetailPro (chunked to avoid ORA-01795).
+
+    Query: SELECT note FROM rps.voucher WHERE status = 4 AND note IN (...)
+    A note is considered processed when a voucher with that note exists at status 4.
+    """
     if not notes:
         return set()
     pool = oc.get("pool")
@@ -291,11 +298,8 @@ async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
     for chunk in _chunks(notes, _ORA_IN_LIMIT):
         placeholders = ", ".join(f"'{n}'" for n in chunk)
         sql = (
-            "SELECT vc.comments "
-            "FROM rps.vou_comment vc "
-            "JOIN rps.voucher v ON v.sid = vc.vou_sid "
-            f"WHERE vc.comments IN ({placeholders}) "
-            "AND v.status = 4"
+            f"SELECT note FROM rps.voucher "
+            f"WHERE status = 4 AND note IN ({placeholders})"
         )
         if pool is not None:
             from app.services.oracle_service import run_query_with_pool
@@ -306,9 +310,9 @@ async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
         if df is not None and not df.is_empty():
             df.columns = [c.upper() for c in df.columns]
             result.update(
-                str(row.get("COMMENTS") or "").strip()
+                str(row.get("NOTE") or "").strip()
                 for row in df.iter_rows(named=True)
-                if row.get("COMMENTS")
+                if row.get("NOTE")
             )
     return result
 
@@ -329,11 +333,15 @@ async def _create_grn_doc(
     auth_session: str,
     storesid: str,
     sbssid: str,
+    note: str = "",
 ) -> tuple[Optional[str], dict, dict]:
     """
     POST /api/backoffice/receiving
+    The note from the CSV is included directly in the create payload.
     Returns (vousid, payload_sent, response_json).
     """
+    from app.core.timezone import now_pkt
+    createddatetime = now_pkt().strftime("%Y-%m-%dT%H:%M:%S.000+05:00")
     payload = {
         "data": [{
             "originapplication": "RProPrismWeb",
@@ -344,6 +352,8 @@ async def _create_grn_doc(
             "voutype": 0,
             "vouclass": 0,
             "verified": True,
+            "createddatetime": createddatetime,
+            "note": note,
         }]
     }
     resp = await http_call_with_retry(
@@ -744,9 +754,9 @@ async def _process_note_group(
         }
 
         try:
-            # Step 1: Create GRN voucher
+            # Step 1: Create GRN voucher (note is embedded directly in the payload)
             vousid, create_payload, create_resp = await _create_grn_doc(
-                http, base_url, auth_session, storesid, sbssid or ""
+                http, base_url, auth_session, storesid, sbssid or "", note=note
             )
             doc_data["api_create_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving", **create_payload}
             doc_data["api_create_response"] = create_resp
@@ -785,14 +795,7 @@ async def _process_note_group(
             doc_data["api_items_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving/{vousid}/recvitem", **items_payload}
             doc_data["api_items_response"] = items_resp
 
-            # Step 5: Post comment
-            comment_payload, comment_resp = await _post_grn_comment(
-                http, base_url, auth_session, vousid, note
-            )
-            doc_data["api_comment_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving/{vousid}/recvcomment?comments={note}", **comment_payload}
-            doc_data["api_comment_response"] = comment_resp
-
-            # Step 6: Get updated rowversion
+            # Step 5: Get updated rowversion (comment step removed — note is in the create payload)
             rowversion2, get_resp2 = await _get_grn_rowversion(http, base_url, auth_session, vousid)
             doc_data["api_get_rowversion2_response"] = {"_url": f"GET {base_url}/api/backoffice/receiving?filter=(sid,eq,{vousid})", **get_resp2}
 
@@ -803,7 +806,7 @@ async def _process_note_group(
                 all_docs.append(doc_data)
                 continue
 
-            # Step 7: Finalize
+            # Step 6: Finalize
             fin_payload, fin_resp = await _finalize_grn(
                 http, base_url, auth_session, vousid, rowversion2
             )
