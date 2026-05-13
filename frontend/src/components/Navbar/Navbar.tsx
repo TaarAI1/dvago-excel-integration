@@ -12,6 +12,7 @@ import StorageIcon from '@mui/icons-material/Storage'
 import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined'
 import RouterOutlinedIcon from '@mui/icons-material/RouterOutlined'
 import CloudDownloadOutlinedIcon from '@mui/icons-material/CloudDownloadOutlined'
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
 
 const NAV_LINKS = [
   { label: 'Dashboard',     path: '/',         icon: <DashboardOutlinedIcon sx={{ fontSize: 16 }} /> },
@@ -20,6 +21,7 @@ const NAV_LINKS = [
   { label: 'Users',         path: '/users',    icon: <PeopleOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Configuration', path: '/settings', icon: <SettingsOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Egress IP',     path: '/network',  icon: <RouterOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Error Logs',    path: '/errors',   icon: <ErrorOutlineIcon sx={{ fontSize: 16 }} /> },
 ]
 
 export default function Navbar() {

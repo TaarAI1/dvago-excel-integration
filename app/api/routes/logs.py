@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 
 from app.core.security import get_current_user
 from app.db.postgres import get_session
@@ -56,6 +56,91 @@ async def list_logs(
         "offset": offset,
         "limit": limit,
         "items": [log_to_response(l) for l in logs],
+    }
+
+
+@router.get("/errors")
+async def list_errors(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    activity_type: Optional[str] = Query(None),
+    document_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _: str = Depends(get_current_user),
+):
+    """Return activity log entries that represent errors.
+
+    An entry is considered an error when its status is 'error' or 'failed',
+    OR when its activity_type is 'error'.
+    """
+    base_error_filter = or_(
+        ActivityLog.status.in_(["error", "failed"]),
+        ActivityLog.activity_type == "error",
+    )
+    filters = [base_error_filter]
+
+    if activity_type:
+        filters.append(ActivityLog.activity_type == activity_type)
+    if document_type:
+        filters.append(ActivityLog.document_type == document_type)
+    if date_from:
+        try:
+            filters.append(ActivityLog.timestamp >= datetime.fromisoformat(date_from))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            filters.append(ActivityLog.timestamp <= datetime.fromisoformat(date_to))
+        except ValueError:
+            pass
+
+    async with get_session() as session:
+        total = await session.scalar(
+            select(func.count()).select_from(ActivityLog).where(*filters)
+        )
+        result = await session.execute(
+            select(ActivityLog)
+            .where(*filters)
+            .order_by(ActivityLog.timestamp.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        logs = result.scalars().all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": [log_to_response(l) for l in logs],
+    }
+
+
+@router.get("/errors/meta")
+async def errors_meta(
+    _: str = Depends(get_current_user),
+):
+    """Return distinct activity_types and document_types that appear in error entries."""
+    base_error_filter = or_(
+        ActivityLog.status.in_(["error", "failed"]),
+        ActivityLog.activity_type == "error",
+    )
+    async with get_session() as session:
+        at_result = await session.execute(
+            select(ActivityLog.activity_type)
+            .where(base_error_filter)
+            .distinct()
+            .order_by(ActivityLog.activity_type)
+        )
+        dt_result = await session.execute(
+            select(ActivityLog.document_type)
+            .where(base_error_filter, ActivityLog.document_type.isnot(None))
+            .distinct()
+            .order_by(ActivityLog.document_type)
+        )
+    return {
+        "activity_types": [r[0] for r in at_result.all()],
+        "document_types": [r[0] for r in dt_result.all()],
     }
 
 
