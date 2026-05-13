@@ -107,9 +107,10 @@ async def _fetch_item_master_errors(batch_key: str) -> list[dict]:
             "error_message":    doc.error_message or "",
             "created_at":       doc.created_at.isoformat() if doc.created_at else "",
         }
-        # Spread every original source-file field as its own column
+        # Spread every original source-file field as its own column.
+        # UPC is kept as-is: empty string when the source had no UPC — never a placeholder.
         for k, v in od.items():
-            row[k] = v if v is not None else ""
+            row[k] = "" if v is None else v
         rows.append(row)
     return rows
 
@@ -209,7 +210,7 @@ def _build_csv(error_rows: list[dict]) -> bytes:
                 seen.add(k)
 
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=all_keys, extrasaction="ignore", lineterminator="\r\n")
+    writer = csv.DictWriter(output, fieldnames=all_keys, extrasaction="ignore", restval="", lineterminator="\r\n")
     writer.writeheader()
     writer.writerows(error_rows)
     # UTF-8 BOM so Excel opens it correctly without import wizard
@@ -306,8 +307,10 @@ def _error_table(error_rows: list[dict], module: str) -> str:
     for i, row in enumerate(preview_rows, 1):
         bg  = "#ffffff" if i % 2 else "#fafafa"
         err = str(row.get("error_message", row.get("item_error", "")))[:300]
-        id_val   = str(row.get(id_key,   row.get("item_upc", "—")) or "—")
-        desc_val = str(row.get(desc_key, "—") or "—")
+        # UPC: show the real value or leave blank — never use a placeholder
+        _raw_id  = row.get(id_key, row.get("item_upc", None))
+        id_val   = str(_raw_id) if _raw_id is not None and str(_raw_id).strip() else ""
+        desc_val = str(row.get(desc_key, "") or "")
         body += (
             f'<tr style="background:{bg}">'
             f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;color:#9ca3af">{i}</td>'
