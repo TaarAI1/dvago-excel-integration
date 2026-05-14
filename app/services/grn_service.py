@@ -761,6 +761,37 @@ async def _process_note_group(
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
+    # Fresh duplicate check immediately before any API call — last-resort guard against
+    # race conditions where two imports both passed the bulk pre-load snapshot.
+    fresh_check = await _batch_check_processed_notes([note], oc)
+    if note in fresh_check:
+        err_doc = {
+            "source_file":   source_file,
+            "note":          note,
+            "store_code":    store_code,
+            "store_name":    store_name,
+            "storesid":      storesid,
+            "sbssid":        sbssid,
+            "vendsid":       vendsid,
+            "vousid":        None,
+            "item_count":    len(rows),
+            "posted_count":  0,
+            "error_count":   len(rows),
+            "status":        "error",
+            "error_message": (
+                f"Note '{note}' was found in RetailPro at the point of posting — "
+                "skipping to prevent duplicate GRN."
+            ),
+            "items_data":    [],
+            "raw_rows":      rows,
+            "_existing_id":  existing_doc_id,
+        }
+        logger.warning(
+            "[GRN] Fresh duplicate check blocked posting for note='%s'.", note
+        )
+        await _persist_grn_doc(err_doc)
+        return [err_doc]
+
     # All items valid — chunk into batches of GRN_ITEM_LIMIT
     chunks = [items_detail[i:i + GRN_ITEM_LIMIT] for i in range(0, len(items_detail), GRN_ITEM_LIMIT)]
     # Map each chunk back to corresponding source rows for retry support
@@ -901,6 +932,24 @@ async def process_grn_csv(
     Returns a summary dict.
     """
     global _active_import_id, _cancel_requests
+
+    # Guard: refuse a second concurrent import to eliminate duplicate-posting race conditions.
+    if _active_import_id is not None:
+        return {
+            "ok": False,
+            "cancelled": False,
+            "error": (
+                "A GRN import is already running "
+                f"(import_id={_active_import_id}). "
+                "Please wait for it to finish before uploading another file."
+            ),
+            "total_docs": 0,
+            "posted_docs": 0,
+            "partial_docs": 0,
+            "error_docs": 0,
+            "total_items": 0,
+            "posted_items": 0,
+        }
 
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
@@ -1129,6 +1178,14 @@ async def retry_grn_doc(doc_id: str) -> dict:
         "username":     (await get_setting("oracle_username"))     or "",
         "password":     (await get_setting("oracle_password"))     or "",
     }
+
+    # Duplicate check before retry — prevents re-posting an already-finalised note.
+    already = await _batch_check_processed_notes([doc.note or ""], oc)
+    if (doc.note or "") in already:
+        raise ValueError(
+            f"Note '{doc.note}' is already finalised in RetailPro (status=4). "
+            "Retry blocked to prevent duplicate GRN."
+        )
 
     async with httpx.AsyncClient(timeout=120) as http:
         results = await _process_note_group(
