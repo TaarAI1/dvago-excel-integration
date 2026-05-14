@@ -5,9 +5,12 @@ Processing pipeline (per note-group, up to 900 items per voucher):
   1.  Parse CSV — find header row, extract Store Code, upc, Vendor Code, note, totalqty
   2.  Skip rows missing upc or note
   3.  Group rows by note field
-  4.  Duplicate check:
-        SELECT note FROM rps.voucher WHERE status = 4 AND note = '{note}'
-        → skip if already finalised
+  4.  Duplicate check (both must return nothing to proceed):
+        Q1: SELECT note FROM rps.voucher WHERE status = 4 AND note = '{note}'
+        Q2: SELECT vc.comments FROM rps.vou_comment vc
+            JOIN rps.voucher v ON vc.vou_sid = v.sid
+            WHERE vc.comments = '{note}' AND v.status = 4
+        → skip if either query returns a result
   5.  For each note-group (chunked to 900 items per voucher):
       a. Oracle lookup for store:
             SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{store_code}'
@@ -288,32 +291,65 @@ async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
 async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
     """Return the set of notes already finalised in RetailPro (chunked to avoid ORA-01795).
 
-    Query: SELECT note FROM rps.voucher WHERE status = 4 AND note IN (...)
-    A note is considered processed when a voucher with that note exists at status 4.
+    Runs two independent queries and unions the results — a note is considered
+    already processed if it appears in EITHER:
+
+    Query 1 (voucher.note):
+        SELECT note FROM rps.voucher WHERE status = 4 AND note IN (...)
+
+    Query 2 (vou_comment.comments joined to voucher):
+        SELECT vc.comments FROM rps.vou_comment vc
+        JOIN rps.voucher v ON vc.vou_sid = v.sid
+        WHERE vc.comments IN (...) AND v.status = 4
     """
     if not notes:
         return set()
     pool = oc.get("pool")
     result: set[str] = set()
-    for chunk in _chunks(notes, _ORA_IN_LIMIT):
-        placeholders = ", ".join(f"'{n}'" for n in chunk)
-        sql = (
-            f"SELECT note FROM rps.voucher "
-            f"WHERE status = 4 AND note IN ({placeholders})"
-        )
+
+    async def _run(sql: str) -> None:
         if pool is not None:
             from app.services.oracle_service import run_query_with_pool
             df = await run_query_with_pool(pool, sql)
         else:
             from app.services.oracle_service import run_query
-            df = await run_query(oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql)
-        if df is not None and not df.is_empty():
-            df.columns = [c.upper() for c in df.columns]
+            df = await run_query(
+                oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+            )
+        return df
+
+    for chunk in _chunks(notes, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"'{n}'" for n in chunk)
+
+        # Query 1 — voucher.note
+        sql1 = (
+            f"SELECT note FROM rps.voucher "
+            f"WHERE status = 4 AND note IN ({placeholders})"
+        )
+        df1 = await _run(sql1)
+        if df1 is not None and not df1.is_empty():
+            df1.columns = [c.upper() for c in df1.columns]
             result.update(
                 str(row.get("NOTE") or "").strip()
-                for row in df.iter_rows(named=True)
+                for row in df1.iter_rows(named=True)
                 if row.get("NOTE")
             )
+
+        # Query 2 — vou_comment joined to voucher
+        sql2 = (
+            f"SELECT vc.comments FROM rps.vou_comment vc "
+            f"JOIN rps.voucher v ON vc.vou_sid = v.sid "
+            f"WHERE vc.comments IN ({placeholders}) AND v.status = 4"
+        )
+        df2 = await _run(sql2)
+        if df2 is not None and not df2.is_empty():
+            df2.columns = [c.upper() for c in df2.columns]
+            result.update(
+                str(row.get("COMMENTS") or "").strip()
+                for row in df2.iter_rows(named=True)
+                if row.get("COMMENTS")
+            )
+
     return result
 
 
