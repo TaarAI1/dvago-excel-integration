@@ -68,7 +68,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
           </Box>
           <Box>
             <Typography sx={{ fontWeight: 700, fontSize: '0.9rem', lineHeight: 1.2, color: '#111827' }}>
-              RetailPro CSV Data Exchange
+              Test Portal
             </Typography>
             <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
               Sign in to your dashboard
@@ -130,7 +130,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       </Box>
 
       <Typography sx={{ mt: 3, fontSize: '0.72rem', color: '#d1d5db' }}>
-        RetailPro CSV Data Exchange v3.0
+        Test Portal v3.0
       </Typography>
     </Box>
   )

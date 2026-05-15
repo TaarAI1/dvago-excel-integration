@@ -73,7 +73,7 @@ export default function Navbar() {
             <Typography
               sx={{ fontWeight: 700, fontSize: '0.875rem', lineHeight: 1.1, color: '#111827' }}
             >
-              RetailPro CSV
+              Test Portal
             </Typography>
             <Typography sx={{ fontSize: '0.65rem', color: '#9ca3af', lineHeight: 1 }}>
               Data Exchange

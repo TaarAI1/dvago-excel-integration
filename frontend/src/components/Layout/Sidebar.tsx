@@ -61,7 +61,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </Box>
           <Box>
             <Typography sx={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, color: '#f8fafc' }}>
-              RetailPro CSV
+              Test Portal
             </Typography>
             <Typography sx={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.3 }}>
               Data Exchange
