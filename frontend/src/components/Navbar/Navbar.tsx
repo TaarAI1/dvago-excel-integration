@@ -13,11 +13,13 @@ import InboxOutlinedIcon from '@mui/icons-material/InboxOutlined'
 import RouterOutlinedIcon from '@mui/icons-material/RouterOutlined'
 import CloudDownloadOutlinedIcon from '@mui/icons-material/CloudDownloadOutlined'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
+import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined'
 
 const NAV_LINKS = [
   { label: 'Dashboard',     path: '/',         icon: <DashboardOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Imports',       path: '/imports',  icon: <InboxOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Exports',       path: '/exports',  icon: <CloudDownloadOutlinedIcon sx={{ fontSize: 16 }} /> },
+  { label: 'Reports',       path: '/reports',  icon: <AssessmentOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Users',         path: '/users',    icon: <PeopleOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Configuration', path: '/settings', icon: <SettingsOutlinedIcon sx={{ fontSize: 16 }} /> },
   { label: 'Egress IP',     path: '/network',  icon: <RouterOutlinedIcon sx={{ fontSize: 16 }} /> },
