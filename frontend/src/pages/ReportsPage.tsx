@@ -7,8 +7,8 @@ import {
 } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import AssessmentOutlinedIcon from '@mui/icons-material/AssessmentOutlined'
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
+import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
+import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import PendingOutlinedIcon from '@mui/icons-material/PendingOutlined'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '../api/client'
@@ -443,14 +443,14 @@ export default function ReportsPage() {
             type="datetime-local" size="small" label="From"
             value={dateFrom}
             onChange={e => { setDateFrom(e.target.value); setPage(0) }}
-            InputLabelProps={{ shrink: true }}
+            slotProps={{ inputLabel: { shrink: true } }}
             sx={{ '& input': { fontSize: '0.78rem' } }}
           />
           <TextField
             type="datetime-local" size="small" label="To"
             value={dateTo}
             onChange={e => { setDateTo(e.target.value); setPage(0) }}
-            InputLabelProps={{ shrink: true }}
+            slotProps={{ inputLabel: { shrink: true } }}
             sx={{ '& input': { fontSize: '0.78rem' } }}
           />
           <Button size="small" variant="contained" onClick={refresh} sx={{ fontSize: '0.78rem' }}>
@@ -464,9 +464,9 @@ export default function ReportsPage() {
         <SummaryCard label="Total"   value={summary.total}   color="#1a56db"
           icon={<AssessmentOutlinedIcon sx={{ fontSize: 18 }} />} />
         <SummaryCard label="Success" value={summary.success} color="#15803d"
-          icon={<CheckCircleOutlineIcon sx={{ fontSize: 18 }} />} />
+          icon={<CheckCircleOutlinedIcon sx={{ fontSize: 18 }} />} />
         <SummaryCard label="Error"   value={summary.error}   color="#b91c1c"
-          icon={<ErrorOutlineIcon sx={{ fontSize: 18 }} />} />
+          icon={<ErrorOutlinedIcon sx={{ fontSize: 18 }} />} />
         <SummaryCard label="Partial" value={summary.partial} color="#b45309"
           icon={<PendingOutlinedIcon sx={{ fontSize: 18 }} />} />
         <SummaryCard label="Pending" value={summary.pending} color="#6b7280"
