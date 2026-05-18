@@ -407,6 +407,15 @@ export default function SettingsPage() {
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_grn_import_path', 'GRN Import Path')}</Grid>
             </Grid>
 
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Manual Export Paths</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_sales_export_path', 'Sales Manual Export Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_returns_export_path', 'Returns Manual Export Path')}</Grid>
+            </Grid>
+
             <TestButton label="Test FTP" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="ftp" />
