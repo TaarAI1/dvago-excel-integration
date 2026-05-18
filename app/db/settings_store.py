@@ -28,6 +28,8 @@ SETTING_DEFINITIONS = [
     ("ftp_transfers_import_path",      "ftp",  "Transfers Import Path",           "/",         False),
     ("ftp_grn_import_path",            "ftp",  "GRN Import Path",                 "/",         False),
     ("ftp_export_path",                "ftp",  "FTP Export Path",                 "/exports",  False),
+    ("ftp_manual_sales_export_path",   "ftp",  "Sales Manual Export Path",        "/exports",  False),
+    ("ftp_manual_returns_export_path", "ftp",  "Returns Manual Export Path",      "/exports",  False),
     # RetailPro
     ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "http://your-retailpro-server", False),
     ("retailpro_username",        "retailpro",    "RetailPro Username",          "",             False),
