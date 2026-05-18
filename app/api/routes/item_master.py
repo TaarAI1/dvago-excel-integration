@@ -145,7 +145,9 @@ async def import_csv(
         logger.exception("Item master CSV import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("item_master", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "item_master"))
     return result
 
 
@@ -186,7 +188,9 @@ async def import_excel(
         logger.exception("Item master import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("item_master", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "item_master"))
     return result
 
 

@@ -174,5 +174,7 @@ async def import_qty_adjustment(
         logger.exception("QTY adjustment import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("qty_adjustment", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "qty_adjustment"))
     return result

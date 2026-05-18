@@ -408,13 +408,15 @@ export default function SettingsPage() {
             </Grid>
 
             <Divider sx={{ my: 2.5 }}>
-              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Manual Export Paths</Typography>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Manual Export</Typography>
             </Divider>
 
             <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_sales_export_path', 'Sales Manual Export Path')}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_returns_export_path', 'Returns Manual Export Path')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_export_path', 'Manual Export Path')}</Grid>
             </Grid>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af', mt: 1 }}>
+              Manually imported files are saved here under sub-folders: <strong>item_master</strong>, <strong>grn</strong>, <strong>transfer_slip</strong>, <strong>qty_adjustment</strong>, <strong>price_adjustment</strong>.
+            </Typography>
 
             <TestButton label="Test FTP" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 2.5 }} />

@@ -68,7 +68,9 @@ async def import_grn(
         logger.exception("GRN import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("grn", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "grn"))
     return result
 
 

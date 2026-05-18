@@ -144,3 +144,71 @@ def upload_file(
         ftp.cwd(path)
         ftp.storbinary(f"STOR {filename}", io.BytesIO(content))
     logger.info(f"Uploaded {filename} to FTP path {path}")
+
+
+def _ensure_ftp_dir(ftp: ftplib.FTP, path: str) -> None:
+    """Navigate to `path` on the FTP server, creating any missing directories."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
+    current = ""
+    for part in parts:
+        current += f"/{part}"
+        try:
+            ftp.cwd(current)
+        except ftplib.error_perm:
+            ftp.mkd(current)
+            ftp.cwd(current)
+
+
+def upload_to_manual_export_subfolder(
+    content: bytes,
+    filename: str,
+    base_path: str,
+    module_folder: str,
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+) -> None:
+    """
+    Upload `content` as `filename` into `{base_path}/{module_folder}/` on the FTP server.
+    Creates the target directory (and any intermediate directories) if they don't exist.
+    """
+    target_path = f"{base_path.rstrip('/')}/{module_folder}"
+    with ftplib.FTP() as ftp:
+        ftp.connect(host, port, timeout=60)
+        ftp.login(user, password)
+        _ensure_ftp_dir(ftp, target_path)
+        ftp.storbinary(f"STOR {filename}", io.BytesIO(content))
+    logger.info(f"Saved manual import '{filename}' → FTP {target_path}")
+
+
+async def save_manual_import_to_ftp(
+    content: bytes,
+    filename: str,
+    module_folder: str,
+) -> None:
+    """
+    Async wrapper: reads FTP settings from the DB and uploads `content` to
+    `{ftp_manual_export_path}/{module_folder}/{filename}`.
+    Silently logs errors so a failed FTP upload never breaks the import response.
+    """
+    import asyncio
+    from app.db.settings_store import get_setting
+
+    try:
+        host       = (await get_setting("ftp_host"))               or ""
+        port       = int((await get_setting("ftp_port"))           or "21")
+        user       = (await get_setting("ftp_user"))               or "anonymous"
+        password   = (await get_setting("ftp_password"))           or ""
+        base_path  = (await get_setting("ftp_manual_export_path")) or "/exports"
+
+        if not host:
+            logger.warning("[FTP manual export] ftp_host not configured — skipping upload.")
+            return
+
+        await asyncio.to_thread(
+            upload_to_manual_export_subfolder,
+            content, filename, base_path, module_folder, host, port, user, password,
+        )
+    except Exception as exc:
+        logger.warning("[FTP manual export] Upload failed for '%s/%s': %s", module_folder, filename, exc)
