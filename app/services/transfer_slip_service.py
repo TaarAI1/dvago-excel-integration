@@ -904,15 +904,22 @@ async def process_transfer_slip_csv(
                         item_info_cache=item_info_cache,
                     )
 
-            tasks = [_process_one(note, note_rows) for note, note_rows in note_groups.items()]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
+            note_items = list(note_groups.items())
+            for idx, (note, note_rows) in enumerate(note_items):
+                try:
+                    r = await _process_one(note, note_rows)
+                except Exception as exc:
+                    r = exc
                 if isinstance(r, Exception):
-                    logger.error("[TransferSlip] Unexpected error in concurrent task: %s", r)
+                    logger.error("[TransferSlip] Unexpected error in task: %s", r)
                 elif r is None:
                     cancelled = True
                 else:
                     all_docs.append(r)
+                # Wait 30 s between documents to avoid overloading RetailPro
+                if idx < len(note_items) - 1 and not _is_cancelled(import_id):
+                    logger.info("[TransferSlip] Waiting 30 s before next document (%d/%d)…", idx + 1, len(note_items))
+                    await asyncio.sleep(30)
     finally:
         _active_import_id = None
         _cancel_requests.discard(import_id)
