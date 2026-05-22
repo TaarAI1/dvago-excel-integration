@@ -713,26 +713,28 @@ async def _process_note_group(
         doc_data["api_finalize_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **fin_payload}
         doc_data["api_finalize_response"] = fin_resp
 
-        # ── Step 9: Re-fetch updated rowversion after finalize ────────────────
-        verify_rowversion, verify_get_resp = await _get_slip_rowversion(
-            http, base_url, auth_session, slip_sid
-        )
-        doc_data["api_verify_get_response"] = {"_url": f"GET {base_url}/api/backoffice/transferslip?filter=(sid,eq,{slip_sid})", **verify_get_resp}
-
-        if verify_rowversion is None:
-            doc_data["error_message"] = (
-                f"Could not get updated rowversion for verify step: {verify_get_resp}"
-            )
-            doc_data["error_count"] = len(rows)
-            await _persist_slip_doc(doc_data)
-            return doc_data
-
-        # ── Step 10: Verify slip (Unverified=0, Verified=1) ──────────────────
-        verify_payload, verify_resp = await _verify_slip(
-            http, base_url, auth_session, slip_sid, verify_rowversion
-        )
-        doc_data["api_verify_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **verify_payload}
-        doc_data["api_verify_response"] = verify_resp
+        # ── Steps 9 & 10 commented out — finalize is the last API call ────────
+        # Step 9: Re-fetch updated rowversion after finalize
+        # verify_rowversion, verify_get_resp = await _get_slip_rowversion(
+        #     http, base_url, auth_session, slip_sid
+        # )
+        # doc_data["api_verify_get_response"] = {"_url": f"GET {base_url}/api/backoffice/transferslip?filter=(sid,eq,{slip_sid})", **verify_get_resp}
+        #
+        # if verify_rowversion is None:
+        #     doc_data["error_message"] = (
+        #         f"Could not get updated rowversion for verify step: {verify_get_resp}"
+        #     )
+        #     doc_data["error_count"] = len(rows)
+        #     await _persist_slip_doc(doc_data)
+        #     return doc_data
+        #
+        # Step 10: Verify slip (Unverified=0, Verified=1)
+        # verify_payload, verify_resp = await _verify_slip(
+        #     http, base_url, auth_session, slip_sid, verify_rowversion
+        # )
+        # doc_data["api_verify_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **verify_payload}
+        # doc_data["api_verify_response"] = verify_resp
+        # ──────────────────────────────────────────────────────────────────────
 
         # Mark items that were resolved as ok
         for item in doc_data["items_data"]:
