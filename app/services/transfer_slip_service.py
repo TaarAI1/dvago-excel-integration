@@ -673,6 +673,36 @@ async def _process_note_group(
             await _persist_slip_doc(doc_data)
             return doc_data
 
+        # ── Duplicate guards (last-resort, right before any RetailPro API call) ─
+        # Guard 1: local PostgreSQL — catches re-uploads of already-posted files.
+        if await _note_already_in_local_db(note):
+            doc_data["error_count"]   = len(rows)
+            doc_data["error_message"] = (
+                f"Note '{note}' already exists in local database with status posted/partial. "
+                "Skipping to prevent duplicate transfer slip."
+            )
+            logger.warning(
+                "[TransferSlip] Local-DB duplicate check blocked posting for note='%s'.", note
+            )
+            await _persist_slip_doc(doc_data)
+            return doc_data
+
+        # Guard 2: fresh Oracle check — catches race conditions where two imports
+        # both passed the bulk pre-load snapshot simultaneously.
+        fresh_check = await _batch_check_processed_notes([note], oc)
+        if note in fresh_check:
+            doc_data["error_count"]   = len(rows)
+            doc_data["error_message"] = (
+                f"Note '{note}' was found in RetailPro at the point of posting — "
+                "skipping to prevent duplicate transfer slip."
+            )
+            logger.warning(
+                "[TransferSlip] Fresh Oracle duplicate check blocked posting for note='%s'.", note
+            )
+            await _persist_slip_doc(doc_data)
+            return doc_data
+        # ─────────────────────────────────────────────────────────────────────────
+
         # ── Step 3: Create transfer slip document ─────────────────────────────
         slip_sid, create_payload, create_resp = await _create_transfer_slip(
             http, base_url, auth_session,
@@ -810,6 +840,25 @@ async def _note_already_processed(note: str, oc: dict) -> bool:
     """Single-note duplicate check (kept for fallback; prefer _batch_check_processed_notes)."""
     processed = await _batch_check_processed_notes([note], oc)
     return note in processed
+
+
+async def _note_already_in_local_db(note: str) -> bool:
+    """
+    Check the local PostgreSQL transfer_slip_docs table for a previously
+    posted/partial record with this note. Fastest guard — does not hit Oracle.
+    """
+    from app.db.postgres import get_session
+    from app.models.transfer_slip_doc import TransferSlipDoc
+    from sqlalchemy import select
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(TransferSlipDoc.id)
+            .where(TransferSlipDoc.note == note)
+            .where(TransferSlipDoc.status.in_(["posted", "partial"]))
+            .limit(1)
+        )
+        return result.scalar() is not None
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
