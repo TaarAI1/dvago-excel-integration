@@ -534,6 +534,26 @@ async def _process_note_batch(
         await _persist_price_adj_doc(doc_data)
         return doc_data
 
+    # Fresh duplicate guard — last-resort check right before any RetailPro API call.
+    # Catches race conditions where two simultaneous imports both passed the initial check.
+    if note:
+        try:
+            if await _is_price_note_processed(note):
+                logger.warning(
+                    "[PriceAdj] Fresh duplicate check blocked posting for note='%s'.", note
+                )
+                doc_data["error_count"]   = len(rows)
+                doc_data["error_message"] = (
+                    f"Note '{note}' already exists in local database (posted/partial) at the "
+                    "point of posting — skipping to prevent duplicate price adjustment."
+                )
+                await _persist_price_adj_doc(doc_data)
+                return doc_data
+        except Exception as _guard_exc:
+            logger.warning(
+                "[PriceAdj] Fresh duplicate guard check failed for note '%s': %s", note, _guard_exc
+            )
+
     try:
         # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
         adj_sid, create_payload, create_resp = await _create_price_adjustment_doc(
