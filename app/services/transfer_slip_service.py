@@ -667,6 +667,15 @@ async def _process_note_group(
         # ─────────────────────────────────────────────────────────────────────────
 
         # ── Step 3: Create transfer slip document ─────────────────────────────
+        # Fresh duplicate check — last-resort guard against race conditions where two
+        # imports both passed the bulk pre-load snapshot.
+        fresh_check = await _batch_check_processed_notes([note], oc)
+        if note in fresh_check:
+            doc_data["error_message"] = f'"{note}" has already been processed (fresh Oracle check).'
+            doc_data["error_count"] = len(rows)
+            await _persist_slip_doc(doc_data)
+            return doc_data
+
         slip_sid, create_payload, create_resp = await _create_transfer_slip(
             http, base_url, auth_session,
             instoresid, insbssid or "",
@@ -839,6 +848,20 @@ async def process_transfer_slip_csv(
     """
     global _active_import_id, _cancel_requests
 
+    # Guard: refuse a second concurrent import to eliminate duplicate-posting race conditions.
+    if _active_import_id is not None:
+        return {
+            "ok": False,
+            "cancelled": False,
+            "error": (
+                "A Transfer Slip import is already running "
+                f"(import_id={_active_import_id}). "
+                "Please wait for it to finish before uploading another file."
+            ),
+            "total_docs": 0, "posted_docs": 0, "partial_docs": 0,
+            "error_docs": 0, "total_items": 0, "posted_items": 0,
+        }
+
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
@@ -999,3 +1022,64 @@ async def process_transfer_slip_csv(
         "total_items":  total_items,
         "posted_items": posted_items,
     }
+
+
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+async def retry_transfer_slip_doc(doc_id: str) -> dict:
+    """Re-run the full pipeline for a single failed Transfer Slip doc."""
+    import uuid as _uuid_mod
+    from app.db.postgres import get_session
+    from app.models.transfer_slip_doc import TransferSlipDoc
+    from app.services.retailpro_auth import get_auth_session
+    from app.db.settings_store import get_setting
+
+    try:
+        oid = _uuid_mod.UUID(doc_id)
+    except ValueError:
+        raise ValueError("Invalid document ID.")
+
+    async with get_session() as session:
+        doc = await session.get(TransferSlipDoc, oid)
+
+    if not doc:
+        raise ValueError("Document not found.")
+    if doc.status == "posted":
+        raise ValueError("Document is already posted.")
+    if not doc.raw_rows:
+        raise ValueError("No raw CSV data stored for this document — cannot retry.")
+
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
+    oc = {
+        "host":         (await get_setting("oracle_host"))         or "",
+        "port":         int((await get_setting("oracle_port"))     or "1521"),
+        "service_name": (await get_setting("oracle_service_name")) or "",
+        "username":     (await get_setting("oracle_username"))     or "",
+        "password":     (await get_setting("oracle_password"))     or "",
+    }
+
+    # Duplicate check before retry — prevents re-posting an already-finalised note
+    # in cases where RetailPro succeeded but a network error left the local status as error/partial.
+    already = await _batch_check_processed_notes([doc.note or ""], oc)
+    if (doc.note or "") in already:
+        raise ValueError(
+            f"Note '{doc.note}' is already finalised in RetailPro (status=4). "
+            "Retry blocked to prevent duplicate transfer slip."
+        )
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        result = await _process_note_group(
+            note=doc.note or "",
+            rows=doc.raw_rows,
+            source_file=doc.source_file or "retry",
+            base_url=base_url,
+            auth_session=auth_session,
+            http=http,
+            oc=oc,
+            store_sids_cache={},
+            item_info_cache={},
+            existing_doc_id=oid,
+        )
+    return result
