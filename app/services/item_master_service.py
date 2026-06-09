@@ -359,8 +359,7 @@ def parse_excel(file_bytes: bytes) -> list[dict]:
         # Build row dict by column name; columns not present in the header are
         # ignored, so extra trailing cells never cause an IndexError.
         rd = {col_map[i]: v for i, v in enumerate(row_vals) if i in col_map}
-        upc_raw = rd.get("UPC")
-        upc_str = str(upc_raw).strip() if upc_raw else ""
+        upc_str = _normalize_upc(rd.get("UPC"))
         # Skip completely blank rows (no UPC and no description at all)
         desc = str(rd.get("DESCRIPTION1") or rd.get("DESCRIPTION") or "").strip()
         if not upc_str and not desc:
@@ -563,6 +562,47 @@ async def _store_sid(store_no: Any, sbssid: Optional[str], cache: dict, oc: dict
             f"SELECT sid FROM rps.store WHERE store_no = {sn} AND sbs_sid = '{sbssid}'", oc
         )
     return cache[key]
+
+
+# ── UPC normalizer ──────────────────────────────────────────────────────────────
+
+def _normalize_upc(raw: Any) -> str:
+    """
+    Return a clean UPC string suitable for RetailPro and display.
+
+    Rules:
+    - None / falsy numerics (0, 0.0)  → ""
+    - Numeric types                    → str(int(value))  e.g. 1234567890123.0 → "1234567890123"
+    - Scientific-notation strings      → str(int(float(v)))  e.g. "1.23E+12" → "1230000000000"
+    - Whole-number float strings       → strip ".0"  e.g. "1234567890123.0" → "1234567890123"
+    - Sentinel "0" / "0.0"             → ""
+    - Anything else                    → stripped string
+    """
+    import re as _re
+    if raw is None:
+        return ""
+    if isinstance(raw, float):
+        if raw == 0.0:
+            return ""
+        if raw == int(raw):
+            return str(int(raw))
+        return str(raw)
+    if isinstance(raw, int):
+        return "" if raw == 0 else str(raw)
+    s = str(raw).strip()
+    if not s or s in ("0", "0.0"):
+        return ""
+    if _re.match(r'^-?\d+\.?\d*[eE][+\-]?\d+$', s):
+        try:
+            f = float(s)
+            if f == int(f):
+                return str(int(f))
+            return str(f)
+        except (ValueError, OverflowError):
+            pass
+    if _re.match(r'^\d+\.0+$', s):
+        return str(int(float(s)))
+    return s
 
 
 # ── Payload builder ─────────────────────────────────────────────────────────────
@@ -920,9 +960,11 @@ async def _persist_result(row: dict, result: dict, source_file: str) -> None:
     # Store the serialisable row dict (convert datetime → str)
     safe_row = {k: (_to_json(v)) for k, v in row.items()}
 
-    # When UPC was empty in the source file but RetailPro returned one, save it
-    # so the grid can display it under the UPC column.
-    if ok and result.get("resp_upc") and not safe_row.get("UPC"):
+    # When UPC was absent/zero in the source (new item), use the UPC RetailPro
+    # assigned so the grid can display it.  Treat stored "0"/"0.0" as absent.
+    _stored_upc = str(safe_row.get("UPC") or "").strip()
+    _upc_is_blank = not _stored_upc or _stored_upc in ("0", "0.0")
+    if ok and result.get("resp_upc") and _upc_is_blank:
         safe_row["UPC"] = result["resp_upc"]
 
     import json as _json
@@ -980,7 +1022,7 @@ def parse_csv_item_master(file_bytes: bytes) -> list[dict]:
     rows_out: list[dict] = []
     for row in reader:
         normalised = {k.strip().upper(): v for k, v in row.items() if k}
-        upc = str(normalised.get("UPC", "")).strip()
+        upc = _normalize_upc(normalised.get("UPC", ""))
         # Skip completely blank rows (no UPC and no description)
         desc = str(normalised.get("DESCRIPTION1", "") or normalised.get("DESCRIPTION", "")).strip()
         if not upc and not desc:
