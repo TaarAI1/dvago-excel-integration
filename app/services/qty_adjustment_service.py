@@ -369,22 +369,6 @@ async def _persist_adj_doc(doc_data: dict) -> None:
 
 # ── Already-processed guard ────────────────────────────────────────────────────
 
-async def _is_qty_note_processed(note: str) -> bool:
-    """Return True if a doc with this note was already posted or partially posted."""
-    from app.db.postgres import get_session
-    from app.models.qty_adjustment_doc import QtyAdjustmentDoc
-    from sqlalchemy import select
-
-    async with get_session() as session:
-        result = await session.execute(
-            select(QtyAdjustmentDoc.id).where(
-                QtyAdjustmentDoc.note == note,
-                QtyAdjustmentDoc.status.in_(["posted", "partial"]),
-            ).limit(1)
-        )
-        return result.scalar() is not None
-
-
 # ── Note batch processor ───────────────────────────────────────────────────────
 
 async def _process_note_batch(
@@ -492,26 +476,6 @@ async def _process_note_batch(
         )
         await _persist_adj_doc(doc_data)
         return doc_data
-
-    # Fresh duplicate guard — last-resort check right before any RetailPro API call.
-    # Catches race conditions where two simultaneous imports both passed the initial check.
-    if note:
-        try:
-            if await _is_qty_note_processed(note):
-                logger.warning(
-                    "[QtyAdj] Fresh duplicate check blocked posting for note='%s'.", note
-                )
-                doc_data["error_count"]   = len(rows)
-                doc_data["error_message"] = (
-                    f"Note '{note}' already exists in local database (posted/partial) at the "
-                    "point of posting — skipping to prevent duplicate qty adjustment."
-                )
-                await _persist_adj_doc(doc_data)
-                return doc_data
-        except Exception as _guard_exc:
-            logger.warning(
-                "[QtyAdj] Fresh duplicate guard check failed for note '%s': %s", note, _guard_exc
-            )
 
     try:
         # ── Step 1: Create adjustment document ───────────────────────────────

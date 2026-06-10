@@ -376,22 +376,6 @@ async def _persist_price_adj_doc(doc_data: dict) -> None:
 
 # ── Already-processed guard ────────────────────────────────────────────────────
 
-async def _is_price_note_processed(note: str) -> bool:
-    """Return True if a doc with this note was already posted or partially posted."""
-    from app.db.postgres import get_session
-    from app.models.price_adjustment_doc import PriceAdjustmentDoc
-    from sqlalchemy import select
-
-    async with get_session() as session:
-        result = await session.execute(
-            select(PriceAdjustmentDoc.id).where(
-                PriceAdjustmentDoc.note == note,
-                PriceAdjustmentDoc.status.in_(["posted", "partial"]),
-            ).limit(1)
-        )
-        return result.scalar() is not None
-
-
 # ── Note batch processor ───────────────────────────────────────────────────────
 
 async def _process_note_batch(
@@ -501,26 +485,6 @@ async def _process_note_batch(
         )
         await _persist_price_adj_doc(doc_data)
         return doc_data
-
-    # Fresh duplicate guard — last-resort check right before any RetailPro API call.
-    # Catches race conditions where two simultaneous imports both passed the initial check.
-    if note:
-        try:
-            if await _is_price_note_processed(note):
-                logger.warning(
-                    "[PriceAdj] Fresh duplicate check blocked posting for note='%s'.", note
-                )
-                doc_data["error_count"]   = len(rows)
-                doc_data["error_message"] = (
-                    f"Note '{note}' already exists in local database (posted/partial) at the "
-                    "point of posting — skipping to prevent duplicate price adjustment."
-                )
-                await _persist_price_adj_doc(doc_data)
-                return doc_data
-        except Exception as _guard_exc:
-            logger.warning(
-                "[PriceAdj] Fresh duplicate guard check failed for note '%s': %s", note, _guard_exc
-            )
 
     try:
         # Step 1: Create adjustment document (adjtype=1, pricelvlsid)
