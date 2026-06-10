@@ -425,18 +425,6 @@ async def _process_note_batch(
     }
     items_detail: list[dict] = []  # kept in outer scope for crash-recovery in except
 
-    # Guard: skip notes that were already successfully processed
-    if note:
-        try:
-            if await _is_price_note_processed(note):
-                logger.info("[PriceAdj] Note '%s' already processed — skipping", note)
-                doc_data["error_message"] = f"{note} already processed"
-                doc_data["error_count"] = len(rows)
-                await _persist_price_adj_doc(doc_data)
-                return doc_data
-        except Exception as guard_exc:
-            logger.warning("[PriceAdj] Could not check duplicate note '%s': %s", note, guard_exc)
-
     if not store_sid:
         logger.warning("No store SID for store_code=%s — skipping %d rows", store_code, len(rows))
         doc_data["error_message"] = f"Store SID not found in Oracle for store_code={store_code}"
