@@ -1,5 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,6 +10,7 @@ scheduler = AsyncIOScheduler()
 FTP_JOB_ID           = "ftp_poll_job"
 SALES_EXPORT_JOB_ID  = "sales_export_job"
 SALES_EXPORT_JOB_ID2 = "sales_export_job_2"
+DIGEST_EMAIL_JOB_ID  = "digest_email_job"
 
 
 def setup_scheduler(
@@ -18,9 +20,10 @@ def setup_scheduler(
 ):
     from app.jobs.ftp_job import poll_ftp_and_ingest
     from app.jobs.sales_export_job import run_sales_export
+    from app.jobs.digest_email_job import send_periodic_digest
 
     # Remove all existing managed jobs before re-adding
-    for job_id in (FTP_JOB_ID, SALES_EXPORT_JOB_ID, SALES_EXPORT_JOB_ID2):
+    for job_id in (FTP_JOB_ID, SALES_EXPORT_JOB_ID, SALES_EXPORT_JOB_ID2, DIGEST_EMAIL_JOB_ID):
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
 
@@ -54,21 +57,35 @@ def setup_scheduler(
             coalesce=True,
             misfire_grace_time=120,
         )
+
+    # Digest email: fires every 6 hours, covers activity since the last run
+    scheduler.add_job(
+        send_periodic_digest,
+        trigger=IntervalTrigger(hours=6),
+        id=DIGEST_EMAIL_JOB_ID,
+        name="Import Digest Email (6h)",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+
+    if sales_export_cron_2 and sales_export_cron_2.strip():
         logger.info(
-            "Scheduler jobs registered. FTP cron: %s, Sales cron 1: %s, Sales cron 2: %s",
+            "Scheduler jobs registered. FTP cron: %s, Sales cron 1: %s, Sales cron 2: %s, Digest: every 6h",
             poll_cron, sales_export_cron, sales_export_cron_2,
         )
     else:
         logger.info(
-            "Scheduler jobs registered. FTP cron: %s, Sales cron: %s (no second time configured)",
+            "Scheduler jobs registered. FTP cron: %s, Sales cron: %s, Digest: every 6h",
             poll_cron, sales_export_cron,
         )
 
 
 def get_schedule_status() -> dict:
-    ftp_job    = scheduler.get_job(FTP_JOB_ID)
-    sales_job  = scheduler.get_job(SALES_EXPORT_JOB_ID)
-    sales_job2 = scheduler.get_job(SALES_EXPORT_JOB_ID2)
+    ftp_job     = scheduler.get_job(FTP_JOB_ID)
+    sales_job   = scheduler.get_job(SALES_EXPORT_JOB_ID)
+    sales_job2  = scheduler.get_job(SALES_EXPORT_JOB_ID2)
+    digest_job  = scheduler.get_job(DIGEST_EMAIL_JOB_ID)
 
     def job_info(job):
         if not job:
@@ -82,8 +99,9 @@ def get_schedule_status() -> dict:
         }
 
     return {
-        "running":          scheduler.running,
-        "ftp_job":          job_info(ftp_job),
-        "sales_export_job": job_info(sales_job),
+        "running":            scheduler.running,
+        "ftp_job":            job_info(ftp_job),
+        "sales_export_job":   job_info(sales_job),
         "sales_export_job_2": job_info(sales_job2),
+        "digest_email_job":   job_info(digest_job),
     }
