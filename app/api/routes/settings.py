@@ -59,15 +59,22 @@ async def save_settings(body: SettingsUpdateRequest, _: str = Depends(get_curren
     clean_updates = {k: v for k, v in body.updates.items() if v != "••••••••"}
     await update_settings(clean_updates)
 
-    # Reload scheduler if relevant cron keys changed
-    cron_keys = {"poll_cron_schedule", "sales_export_cron"}
-    if cron_keys & set(clean_updates.keys()):
-        poll_cron = await get_setting("poll_cron_schedule", "*/15 * * * *")
-        sales_cron = await get_setting("sales_export_cron", "0 2 * * *")
+    # Reload scheduler if any scheduler-related keys changed
+    scheduler_keys = {"poll_cron_schedule", "sales_export_cron", "sales_export_cron_2", "digest_email_interval_hours"}
+    if scheduler_keys & set(clean_updates.keys()):
+        poll_cron    = await get_setting("poll_cron_schedule", "*/15 * * * *")
+        sales_cron   = await get_setting("sales_export_cron",  "0 2 * * *")
+        sales_cron_2 = await get_setting("sales_export_cron_2") or ""
+        digest_hours = int((await get_setting("digest_email_interval_hours")) or "6")
         try:
-            setup_scheduler(poll_cron or "*/15 * * * *", sales_cron or "0 2 * * *")
+            setup_scheduler(
+                poll_cron    or "*/15 * * * *",
+                sales_cron   or "0 2 * * *",
+                sales_cron_2,
+                digest_hours,
+            )
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {exc}")
+            raise HTTPException(status_code=400, detail=f"Invalid scheduler setting: {exc}")
 
     return {"message": f"Saved {len(clean_updates)} settings."}
 

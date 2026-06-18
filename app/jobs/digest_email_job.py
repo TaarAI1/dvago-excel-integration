@@ -1,13 +1,13 @@
 """
 Periodic import-digest email job.
 
-Runs every 6 hours.  Queries all five import modules for records created
-since the last digest was sent, then emails a consolidated summary showing
-every file processed and its posted / error counts.
+Queries all five import modules for records created since the last digest
+was sent, then emails a consolidated summary showing every file processed
+and its posted / error counts.
 
-The last-run timestamp is persisted in the ``system_config`` table under
-the key ``"last_digest_email_sent"``.  On the very first run the window
-defaults to the previous 6 hours.
+The interval is configurable via the ``digest_email_interval_hours``
+application setting (default 6 hours).  The last-run timestamp is persisted
+in the ``system_config`` table under ``"last_digest_email_sent"``.
 """
 import logging
 from datetime import datetime, timedelta
@@ -16,14 +16,24 @@ from app.core.timezone import now_pkt
 
 logger = logging.getLogger(__name__)
 
-_LAST_SENT_KEY   = "last_digest_email_sent"
-_WINDOW_HOURS    = 6
+_LAST_SENT_KEY = "last_digest_email_sent"
+_DEFAULT_WINDOW_HOURS = 6
+
+
+async def _get_digest_interval_hours() -> int:
+    """Read configured interval from settings, fallback to 6."""
+    try:
+        from app.db.settings_store import get_setting
+        val = await get_setting("digest_email_interval_hours")
+        return max(1, int(val or _DEFAULT_WINDOW_HOURS))
+    except Exception:
+        return _DEFAULT_WINDOW_HOURS
 
 
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
 
 async def _get_last_sent() -> datetime:
-    """Return the last-sent timestamp, or 6 hours ago if never sent."""
+    """Return the last-sent timestamp, or <interval> hours ago if never sent."""
     from app.db.postgres import get_session
     from app.models.system_config import SystemConfig
 
@@ -35,7 +45,8 @@ async def _get_last_sent() -> datetime:
             return datetime.fromisoformat(row.value)
         except ValueError:
             pass
-    return now_pkt() - timedelta(hours=_WINDOW_HOURS)
+    window = await _get_digest_interval_hours()
+    return now_pkt() - timedelta(hours=window)
 
 
 async def _save_last_sent(ts: datetime) -> None:

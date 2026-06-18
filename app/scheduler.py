@@ -17,10 +17,13 @@ def setup_scheduler(
     poll_cron: str,
     sales_export_cron: str = "0 2 * * *",
     sales_export_cron_2: str = "",
+    digest_interval_hours: int = 6,
 ):
     from app.jobs.ftp_job import poll_ftp_and_ingest
     from app.jobs.sales_export_job import run_sales_export
     from app.jobs.digest_email_job import send_periodic_digest
+
+    digest_hours = max(1, int(digest_interval_hours))
 
     # Remove all existing managed jobs before re-adding
     for job_id in (FTP_JOB_ID, SALES_EXPORT_JOB_ID, SALES_EXPORT_JOB_ID2, DIGEST_EMAIL_JOB_ID):
@@ -58,12 +61,11 @@ def setup_scheduler(
             misfire_grace_time=120,
         )
 
-    # Digest email: fires every 6 hours, covers activity since the last run
     scheduler.add_job(
         send_periodic_digest,
-        trigger=IntervalTrigger(hours=6),
+        trigger=IntervalTrigger(hours=digest_hours),
         id=DIGEST_EMAIL_JOB_ID,
-        name="Import Digest Email (6h)",
+        name=f"Import Digest Email (every {digest_hours}h)",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,
@@ -71,13 +73,13 @@ def setup_scheduler(
 
     if sales_export_cron_2 and sales_export_cron_2.strip():
         logger.info(
-            "Scheduler jobs registered. FTP cron: %s, Sales cron 1: %s, Sales cron 2: %s, Digest: every 6h",
-            poll_cron, sales_export_cron, sales_export_cron_2,
+            "Scheduler jobs registered. FTP cron: %s, Sales cron 1: %s, Sales cron 2: %s, Digest: every %dh",
+            poll_cron, sales_export_cron, sales_export_cron_2, digest_hours,
         )
     else:
         logger.info(
-            "Scheduler jobs registered. FTP cron: %s, Sales cron: %s, Digest: every 6h",
-            poll_cron, sales_export_cron,
+            "Scheduler jobs registered. FTP cron: %s, Sales cron: %s, Digest: every %dh",
+            poll_cron, sales_export_cron, digest_hours,
         )
 
 

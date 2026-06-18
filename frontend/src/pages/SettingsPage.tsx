@@ -568,6 +568,22 @@ export default function SettingsPage() {
             <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
               Format: minute · hour · day · month · weekday &nbsp;·&nbsp; Leave Time 2 empty to disable it.
             </Typography>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Digest Email Schedule</Typography>
+            </Divider>
+
+            <Grid container spacing={2} alignItems="flex-start">
+              <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours', 'Send Digest Email Every (hours)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>
+                <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 2 }}>
+                  A summary email of all import activity is sent automatically at this interval (minimum 1 hour).
+                  &nbsp;The email covers only files processed since the previous digest.
+                  &nbsp;Changes take effect immediately after saving.
+                </Typography>
+              </Grid>
+            </Grid>
+
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="scheduler" />
           </TabPanel>

@@ -44,9 +44,10 @@ SETTING_DEFINITIONS = [
     ("oracle_username",           "oracle",       "Oracle Username",             "",             False),
     ("oracle_password",           "oracle",       "Oracle Password",             "",             True),
     # Scheduler
-    ("poll_cron_schedule",        "scheduler",    "FTP Import Cron",             "*/15 * * * *", False),
-    ("sales_export_cron",         "scheduler",    "Sales Export Cron (Time 1)",  "0 2 * * *",    False),
-    ("sales_export_cron_2",       "scheduler",    "Sales Export Cron (Time 2)",  "",             False),
+    ("poll_cron_schedule",            "scheduler",    "FTP Import Cron",                    "*/15 * * * *", False),
+    ("sales_export_cron",             "scheduler",    "Sales Export Cron (Time 1)",         "0 2 * * *",    False),
+    ("sales_export_cron_2",           "scheduler",    "Sales Export Cron (Time 2)",         "",             False),
+    ("digest_email_interval_hours",   "scheduler",    "Digest Email Interval (hours)",      "6",            False),
     # Sales Export
     ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),
