@@ -573,7 +573,7 @@ export default function SettingsPage() {
               <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Digest Email Schedule</Typography>
             </Divider>
 
-            <Grid container spacing={2} alignItems="flex-start">
+            <Grid container spacing={2} sx={{ alignItems: 'flex-start' }}>
               <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours', 'Send Digest Email Every (hours)')}</Grid>
               <Grid size={{ xs: 12, sm: 8 }}>
                 <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 2 }}>
