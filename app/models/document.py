@@ -4,6 +4,7 @@ from sqlalchemy import String, Boolean, Text, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.db.postgres import Base
+from app.core.timezone import now_pkt
 
 
 class Document(Base):
@@ -16,8 +17,8 @@ class Document(Base):
     posted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     has_error: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_pkt, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_pkt, onupdate=now_pkt, nullable=False)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     source_file: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

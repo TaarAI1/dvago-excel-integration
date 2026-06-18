@@ -5,7 +5,7 @@ Called after every import batch (manual or FTP) to send a module-specific
 HTML summary email to the configured SMTP recipient.
 
 If SMTP is not configured, or if sending fails for any reason, the error is
-logged silently ΓÇö the import response is never blocked or failed.
+logged silently - the import response is never blocked or failed.
 
 Usage (fire-and-forget from an async route):
     import asyncio
@@ -231,6 +231,27 @@ def _tr(label: str, value, good: bool = True) -> str:
     )
 
 
+def _duration_str(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(int(seconds), 60)
+    if m < 60:
+        return f"{m}m {s}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m {s}s"
+
+
+def _timing_rows(result: dict) -> str:
+    rows = ""
+    if result.get("started_at"):
+        rows += _tr("Started At (PKT)",   result["started_at"],   good=True)
+    if result.get("completed_at"):
+        rows += _tr("Completed At (PKT)", result["completed_at"], good=True)
+    if result.get("duration_seconds") is not None:
+        rows += _tr("Duration", _duration_str(result["duration_seconds"]), good=True)
+    return rows
+
+
 def _summary_item_master(result: dict) -> str:
     total   = result.get("of_total", result.get("total", 0))
     created = result.get("created", 0)
@@ -239,11 +260,12 @@ def _summary_item_master(result: dict) -> str:
     return "".join([
         _tr("Total Rows",  total),
         _tr("Processed",   result.get("total", 0)),
-        _tr("Γ£ô Created",   created),
-        _tr("Γ£ô Updated",   updated),
-        _tr("Γ£ù Errors",    errors,  good=(errors == 0)),
+        _tr("&#10003; Created",   created),
+        _tr("&#10003; Updated",   updated),
+        _tr("&#10007; Errors",    errors,  good=(errors == 0)),
         _tr("Cancelled",   "Yes" if result.get("cancelled") else "No",
             good=not result.get("cancelled")),
+        _timing_rows(result),
     ])
 
 
@@ -253,13 +275,14 @@ def _summary_doc_module(result: dict) -> str:
     return "".join([
         _tr("Total Rows",         result.get("total_rows",   0)),
         _tr("Total Documents",    result.get("total_docs",   0)),
-        _tr("Γ£ô Posted Documents", result.get("posted_docs",  0)),
-        _tr("ΓÜá Partial Documents",partial, good=(partial == 0)),
-        _tr("Γ£ù Error Documents",  errors,  good=(errors  == 0)),
-        _tr("Total Items",        result.get("total_items",  0)),
-        _tr("Γ£ô Posted Items",     result.get("posted_items", 0)),
+        _tr("&#10003; Posted Documents", result.get("posted_docs",  0)),
+        _tr("&#9888; Partial Documents", partial, good=(partial == 0)),
+        _tr("&#10007; Error Documents",  errors,  good=(errors  == 0)),
+        _tr("Total Items",               result.get("total_items",  0)),
+        _tr("&#10003; Posted Items",     result.get("posted_items", 0)),
         _tr("Cancelled",          "Yes" if result.get("cancelled") else "No",
             good=not result.get("cancelled")),
+        _timing_rows(result),
     ])
 
 
@@ -268,7 +291,7 @@ def _error_table(error_rows: list[dict], module: str) -> str:
     if not error_rows:
         return (
             '<p style="color:#15803d;font-size:13px;font-weight:600">'
-            '&#10003; No errors ΓÇö all records processed successfully.</p>'
+            '&#10003; No errors &mdash; all records processed successfully.</p>'
         )
 
     is_item_master = module == "item_master"
@@ -327,7 +350,7 @@ def _error_table(error_rows: list[dict], module: str) -> str:
         footer = (
             f'<tr><td colspan="4" style="padding:8px 10px;text-align:center;'
             f'color:#9ca3af;font-size:11px;font-style:italic">'
-            f'ΓÇª and {more} more error{"s" if more != 1 else ""} ΓÇö see attached CSV for full details'
+            f'... and {more} more error{"s" if more != 1 else ""} - see attached CSV for full details'
             f'</td></tr>'
         )
 
@@ -343,7 +366,12 @@ def _build_html(
     label    = MODULE_LABELS.get(module, module.replace("_", " ").title())
     accent   = MODULE_ACCENT.get(module, "#1a56db")
     filename = batch_key.split("::")[0]
-    ts       = batch_key.split("::")[-1] if "::" in batch_key else "ΓÇö"
+    _ts_raw  = batch_key.split("::")[-1] if "::" in batch_key else "-"
+    try:
+        from datetime import datetime as _dt
+        ts = _dt.strptime(_ts_raw, "%Y%m%d_%H%M%S").strftime("%d-%b-%Y %H:%M:%S") + " PKT"
+    except Exception:
+        ts = _ts_raw
 
     error_count = result.get("errors", result.get("error_docs", 0))
     status_txt   = "COMPLETED WITH ERRORS" if error_count else "COMPLETED SUCCESSFULLY"
@@ -449,18 +477,18 @@ def _build_subject(module: str, batch_key: str, result: dict) -> str:
         created = result.get("created", 0)
         updated = result.get("updated", 0)
         errors  = result.get("errors",  0)
-        flag    = "Γ£ô" if not errors else "Γ£ù"
+        flag    = "[OK]" if not errors else "[ERR]"
         return (
-            f"[{label}] {flag} {filename} ΓÇö "
+            f"[{label}] {flag} {filename} - "
             f"{created} created, {updated} updated, {errors} errors"
         )
 
     posted  = result.get("posted_docs",  0)
     total   = result.get("total_docs",   0)
     errors  = result.get("error_docs",   0)
-    flag    = "Γ£ô" if not errors else "Γ£ù"
+    flag    = "[OK]" if not errors else "[ERR]"
     return (
-        f"[{label}] {flag} {filename} ΓÇö "
+        f"[{label}] {flag} {filename} - "
         f"{posted}/{total} docs posted, {errors} errors"
     )
 

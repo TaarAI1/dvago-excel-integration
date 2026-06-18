@@ -48,6 +48,17 @@ interface Batch {
 // ── Date helper (PKT) ─────────────────────────────────────────────────────────
 const fmt = fmtDateTime
 
+// ── Duration helper ───────────────────────────────────────────────────────────
+function fmtDuration(seconds: number | undefined): string {
+  if (seconds === undefined || seconds === null) return ''
+  const s = Math.round(seconds)
+  if (s < 60) return ` · ${s}s`
+  const m = Math.floor(s / 60), rem = s % 60
+  if (m < 60) return ` · ${m}m ${rem}s`
+  const h = Math.floor(m / 60), mm = m % 60
+  return ` · ${h}h ${mm}m ${rem}s`
+}
+
 // ── Cell helper ───────────────────────────────────────────────────────────────
 
 const cell = (doc: DocItem, key: string): string =>
@@ -354,9 +365,9 @@ function ItemMasterTab() {
       })
       const d = res.data
       if (d.cancelled) {
-        setToast({ severity: 'warning', msg: `Stopped — ${d.total} of ${d.of_total} rows processed (${d.created} created, ${d.updated} updated, ${d.errors} errors)` })
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total} of ${d.of_total} rows processed (${d.created} created, ${d.updated} updated, ${d.errors} errors)${fmtDuration(d.duration_seconds)}` })
       } else {
-        setToast({ severity: 'success', msg: `Done — ${d.total} rows, ${d.created} created, ${d.updated} updated, ${d.errors} errors` })
+        setToast({ severity: 'success', msg: `Done — ${d.total} rows, ${d.created} created, ${d.updated} updated, ${d.errors} errors${fmtDuration(d.duration_seconds)}` })
       }
       qc.invalidateQueries({ queryKey: ['im-batches'] })
       qc.invalidateQueries({ queryKey: ['imports-im'] })
@@ -934,9 +945,9 @@ function QtyAdjustmentTab() {
       })
       const d = res.data
       if (d.cancelled) {
-        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)${fmtDuration(d.duration_seconds)}` })
       } else {
-        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors${fmtDuration(d.duration_seconds)}` })
       }
       qc.invalidateQueries({ queryKey: ['qa-batches'] })
       qc.invalidateQueries({ queryKey: ['qa-docs'] })
@@ -1432,9 +1443,9 @@ function PriceAdjustmentTab() {
       })
       const d = res.data
       if (d.cancelled) {
-        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)${fmtDuration(d.duration_seconds)}` })
       } else {
-        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} docs, ${d.posted_docs} posted, ${d.error_docs} errors${fmtDuration(d.duration_seconds)}` })
       }
       qc.invalidateQueries({ queryKey: ['pa-batches'] })
       qc.invalidateQueries({ queryKey: ['pa-docs'] })
@@ -1926,9 +1937,9 @@ function TransferSlipTab() {
       })
       const d = res.data
       if (d.cancelled) {
-        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} slips processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} slips processed (${d.posted_docs} posted, ${d.error_docs} errors)${fmtDuration(d.duration_seconds)}` })
       } else {
-        setToast({ severity: 'success', msg: `Done — ${d.total_docs} slips, ${d.posted_docs} posted, ${d.error_docs} errors` })
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} slips, ${d.posted_docs} posted, ${d.error_docs} errors${fmtDuration(d.duration_seconds)}` })
       }
       qc.invalidateQueries({ queryKey: ['ts-batches'] })
       qc.invalidateQueries({ queryKey: ['ts-docs'] })
@@ -2424,9 +2435,9 @@ function GRNTab() {
       })
       const d = res.data
       if (d.cancelled) {
-        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)` })
+        setToast({ severity: 'warning', msg: `Stopped — ${d.total_docs} docs processed (${d.posted_docs} posted, ${d.error_docs} errors)${fmtDuration(d.duration_seconds)}` })
       } else {
-        setToast({ severity: 'success', msg: `Done — ${d.total_docs} GRN docs, ${d.posted_docs} posted, ${d.error_docs} errors` })
+        setToast({ severity: 'success', msg: `Done — ${d.total_docs} GRN docs, ${d.posted_docs} posted, ${d.error_docs} errors${fmtDuration(d.duration_seconds)}` })
       }
       qc.invalidateQueries({ queryKey: ['grn-batches'] })
       qc.invalidateQueries({ queryKey: ['grn-docs'] })

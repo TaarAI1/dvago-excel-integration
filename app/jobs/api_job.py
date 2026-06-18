@@ -2,6 +2,7 @@ import time
 import json
 import logging
 from datetime import datetime
+from app.core.timezone import now_pkt
 
 from sqlalchemy import select, update
 
@@ -54,7 +55,7 @@ async def process_pending_docs():
                         update(Document).where(Document.id == doc.id).values(
                             has_error=True,
                             error_message=f"No API endpoint configured for document_type='{doc_type}'",
-                            updated_at=datetime.utcnow(),
+                            updated_at=now_pkt(),
                         )
                     )
                     await write_log(session, activity_type="api_call", document_id=str(doc.id),
@@ -73,7 +74,7 @@ async def process_pending_docs():
             if data and isinstance(data, list) and len(data) > 0:
                 sid = data[0].get("sid")
 
-            now = datetime.utcnow()
+            now = now_pkt()
             async with get_session() as session:
                 async with session.begin():
                     await session.execute(
@@ -102,7 +103,7 @@ async def process_pending_docs():
                         update(Document).where(Document.id == doc.id).values(
                             has_error=True,
                             error_message=error_detail,
-                            updated_at=datetime.utcnow(),
+                            updated_at=now_pkt(),
                         )
                     )
                     await write_log(session, activity_type="api_call", document_id=str(doc.id),
@@ -123,7 +124,7 @@ async def process_pending_docs():
                         update(Document).where(Document.id == doc.id).values(
                             has_error=True,
                             error_message=str(exc),
-                            updated_at=datetime.utcnow(),
+                            updated_at=now_pkt(),
                         )
                     )
                     await write_log(session, activity_type="api_call", document_id=str(doc.id),

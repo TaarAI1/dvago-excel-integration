@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, Integer, Float, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.postgres import Base
+from app.core.timezone import now_pkt
 
 
 class SalesExportRun(Base):
@@ -16,7 +17,7 @@ class SalesExportRun(Base):
     total_stores:    Mapped[int]       = mapped_column(Integer, default=0, nullable=False)
     processed_stores: Mapped[int]     = mapped_column(Integer, default=0, nullable=False)
     error_message:   Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at:      Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    started_at:      Mapped[datetime] = mapped_column(DateTime, default=now_pkt, nullable=False, index=True)
     finished_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -37,7 +38,7 @@ class SalesExportStore(Base):
     status:       Mapped[str]       = mapped_column(String(20), default="pending", nullable=False)
     error_message:Mapped[str | None]= mapped_column(Text, nullable=True)
     duration_ms:  Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at:   Mapped[datetime]  = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at:   Mapped[datetime]  = mapped_column(DateTime, default=now_pkt, nullable=False)
 
 
 def run_to_response(r: SalesExportRun) -> dict:

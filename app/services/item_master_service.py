@@ -1051,6 +1051,8 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     _active_import_id = import_id
     _cancel_requests.discard(import_id)
 
+    batch_started_at = now_pkt()
+
     oc = {
         "host":         (await get_setting("oracle_host"))         or "",
         "port":         int((await get_setting("oracle_port"))     or "1521"),
@@ -1121,15 +1123,21 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     updated = sum(1 for r in results if r["ok"] and r["action"] == "updated")
     errors  = sum(1 for r in results if not r["ok"])
 
+    batch_completed_at = now_pkt()
+    duration_seconds   = round((batch_completed_at - batch_started_at).total_seconds())
+
     return {
-        "ok":        True,
-        "cancelled": cancelled,
-        "total":     len(results),
-        "of_total":  len(rows),
-        "created":   created,
-        "updated":   updated,
-        "errors":    errors,
-        "results":   results,
+        "ok":               True,
+        "cancelled":        cancelled,
+        "total":            len(results),
+        "of_total":         len(rows),
+        "created":          created,
+        "updated":          updated,
+        "errors":           errors,
+        "results":          results,
+        "started_at":       batch_started_at.strftime("%d-%b-%Y %H:%M:%S"),
+        "completed_at":     batch_completed_at.strftime("%d-%b-%Y %H:%M:%S"),
+        "duration_seconds": duration_seconds,
     }
 
 

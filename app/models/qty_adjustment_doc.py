@@ -4,6 +4,7 @@ from sqlalchemy import String, Integer, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.db.postgres import Base
+from app.core.timezone import now_pkt
 
 
 class QtyAdjustmentDoc(Base):
@@ -37,7 +38,7 @@ class QtyAdjustmentDoc(Base):
     # Per-item detail: [{upc, adj_value, item_sid, ok, error}]
     items_data: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_pkt, nullable=False, index=True)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 

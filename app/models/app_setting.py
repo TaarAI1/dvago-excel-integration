@@ -2,6 +2,7 @@ from datetime import datetime
 from sqlalchemy import String, Text, Boolean, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.postgres import Base
+from app.core.timezone import now_pkt
 
 
 class AppSetting(Base):
@@ -13,5 +14,5 @@ class AppSetting(Base):
     label: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=now_pkt, onupdate=now_pkt, nullable=False
     )

@@ -874,6 +874,7 @@ async def process_grn_csv(
     from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
     from app.db.settings_store import get_setting
 
+    batch_started_at = now_pkt()
     rows = parse_grn_csv(file_bytes)
     if not rows:
         return {
@@ -1058,14 +1059,20 @@ async def process_grn_csv(
     total_items  = sum(d.get("item_count", 0) for d in all_docs)
     posted_items = sum(d.get("posted_count", 0) for d in all_docs)
 
+    batch_completed_at = now_pkt()
+    duration_seconds   = round((batch_completed_at - batch_started_at).total_seconds())
+
     return {
-        "ok":           True,
-        "cancelled":    cancelled,
-        "total_rows":   len(rows),
-        "total_docs":   total_docs,
-        "posted_docs":  posted_docs,
-        "partial_docs": partial_docs,
-        "error_docs":   error_docs,
-        "total_items":  total_items,
-        "posted_items": posted_items,
+        "ok":               True,
+        "cancelled":        cancelled,
+        "total_rows":       len(rows),
+        "total_docs":       total_docs,
+        "posted_docs":      posted_docs,
+        "partial_docs":     partial_docs,
+        "error_docs":       error_docs,
+        "total_items":      total_items,
+        "posted_items":     posted_items,
+        "started_at":       batch_started_at.strftime("%d-%b-%Y %H:%M:%S"),
+        "completed_at":     batch_completed_at.strftime("%d-%b-%Y %H:%M:%S"),
+        "duration_seconds": duration_seconds,
     }
