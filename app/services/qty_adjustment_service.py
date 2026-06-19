@@ -224,9 +224,9 @@ async def _post_adj_items(
     base_url: str,
     auth_session: str,
     adj_sid: str,
-    items: list[dict],  # [{item_sid, adj_value, upc}]
+    item: dict,  # single item {item_sid, adj_value, upc}
 ) -> tuple[dict, dict, int]:
-    """POST /api/backoffice/adjustment/{adj_sid}/adjitem
+    """POST /api/backoffice/adjustment/{adj_sid}/adjitem for a single item.
     Returns (payload_sent, response_json, http_status_code).
     """
     payload = {
@@ -238,8 +238,6 @@ async def _post_adj_items(
                 "itempos": 1,
                 "adjvalue": item["adj_value"],
             }
-            for item in items
-            if item.get("item_sid")
         ]
     }
     resp = await http.post(
@@ -528,35 +526,41 @@ async def _process_note_batch(
 
         doc_data["items_data"] = items_detail
 
-        # ── Step 3: Post adj items ────────────────────────────────────────────
-        items_payload, items_resp, items_status = await _post_adj_items(
-            http, base_url, auth_session, adj_sid, items_for_api
-        )
-        doc_data["api_items_payload"] = items_payload
-        doc_data["api_items_response"] = items_resp
+        # ── Step 3: Post items one by one to avoid RetailPro timeout ─────────
+        all_items_payloads: list[dict] = []
+        all_items_responses: list[dict] = []
 
-        _items_ok = items_status < 400
-        if _items_ok and isinstance(items_resp, dict):
-            _items_errors = items_resp.get("errors") or items_resp.get("error")
-            if _items_errors:
-                _items_ok = False
+        for idx, item in enumerate(items_for_api):
+            if not item.get("item_sid"):
+                continue
+            i_payload, i_resp, i_status = await _post_adj_items(
+                http, base_url, auth_session, adj_sid, item
+            )
+            all_items_payloads.append(i_payload)
+            all_items_responses.append(i_resp)
 
-        if not _items_ok:
-            _items_err_detail = None
-            if isinstance(items_resp, dict):
-                _items_err_detail = items_resp.get("errors") or items_resp.get("error")
-            doc_data["error_message"] = (
-                f"[Step 3 failed] POST adjitems returned HTTP {items_status}. "
-                + (f"RetailPro error: {_items_err_detail}. " if _items_err_detail else "")
-                + "Full response → see Step 3 POST Items Response in API trace."
-            )
-            doc_data["error_count"] = len(rows)
-            logger.warning(
-                "[QtyAdj] POST adjitems failed note='%s' adj_sid=%s HTTP %d",
-                note, adj_sid, items_status,
-            )
-            await _persist_adj_doc(doc_data)
-            return doc_data
+            i_ok = i_status < 400
+            if i_ok and isinstance(i_resp, dict):
+                if i_resp.get("errors") or i_resp.get("error"):
+                    i_ok = False
+
+            if not i_ok:
+                _i_err_detail = None
+                if isinstance(i_resp, dict):
+                    _i_err_detail = i_resp.get("errors") or i_resp.get("error")
+                items_detail[idx]["error"] = (
+                    f"POST adjitem HTTP {i_status}"
+                    + (f": {_i_err_detail}" if _i_err_detail else "")
+                )
+                logger.warning(
+                    "[QtyAdj] POST adjitem failed note='%s' adj_sid=%s upc=%s HTTP %d",
+                    note, adj_sid, item.get("upc"), i_status,
+                )
+            else:
+                items_detail[idx]["ok"] = True
+
+        doc_data["api_items_payload"] = all_items_payloads
+        doc_data["api_items_response"] = all_items_responses
 
         # ── Step 4: Get rowversion ────────────────────────────────────────────
         rowversion, get_resp = await _get_adjustment_rowversion(
@@ -601,10 +605,6 @@ async def _process_note_batch(
             return doc_data
 
         logger.info("[QtyAdj] Finalize PUT succeeded note='%s' adj_sid=%s HTTP %d", note, adj_sid, fin_status)
-
-        for item in doc_data["items_data"]:
-            if item.get("item_sid"):
-                item["ok"] = True
 
         posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
         errors = len(doc_data["items_data"]) - posted
