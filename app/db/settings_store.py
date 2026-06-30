@@ -28,6 +28,7 @@ SETTING_DEFINITIONS = [
     ("ftp_transfers_import_path",      "ftp",  "Transfers Import Path",           "/",         False),
     ("ftp_grn_import_path",            "ftp",  "GRN Import Path",                 "/",         False),
     ("ftp_export_path",                "ftp",  "FTP Export Path",                 "/exports",  False),
+    ("ftp_manual_export_path",         "ftp",  "Manual Export Path",              "/exports",  False),
     # RetailPro
     ("retailpro_base_url",        "retailpro",    "RetailPro Base URL",          "http://your-retailpro-server", False),
     ("retailpro_username",        "retailpro",    "RetailPro Username",          "",             False),
@@ -51,6 +52,9 @@ SETTING_DEFINITIONS = [
     # Sales Export
     ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),
+    # Return Sale Export
+    ("return_sale_sql",               "sales_export", "Return Sale SQL Query",        "", False),
+    ("return_sale_filename_prefix",   "sales_export", "Return Sale Filename Prefix",  "return_sale",  False),
     # Sales Export — dedicated Oracle connection (separate from the shared Oracle DB)
     ("sales_oracle_host",             "sales_export", "Oracle Host (Sales Export)",   "",     False),
     ("sales_oracle_port",             "sales_export", "Oracle Port (Sales Export)",   "1521", False),
@@ -64,9 +68,15 @@ SETTING_DEFINITIONS = [
     ("smtp_password",             "smtp",         "SMTP Password",               "",             True),
     ("smtp_use_tls",              "smtp",         "Use TLS",                     "true",         False),
     ("smtp_from_email",           "smtp",         "From Email",                  "",             False),
-    ("smtp_to_email",             "smtp",         "To Email",                    "",             False),
+    ("smtp_to_email",             "smtp",         "To Email (default)",          "",             False),
     ("smtp_reply_to",             "smtp",         "Reply To",                    "",             False),
     ("smtp_cc_email",             "smtp",         "CC Email",                    "",             False),
+    # Per-module error report recipients — fall back to smtp_to_email when blank
+    ("smtp_to_email_item_master",      "smtp", "Item Master — Error Report Email",       "", False),
+    ("smtp_to_email_qty_adjustment",   "smtp", "Qty Adjustment — Error Report Email",    "", False),
+    ("smtp_to_email_price_adjustment", "smtp", "Price Adjustment — Error Report Email",  "", False),
+    ("smtp_to_email_transfer_slip",    "smtp", "Transfer Slip — Error Report Email",     "", False),
+    ("smtp_to_email_grn",              "smtp", "GRN — Error Report Email",               "", False),
 ]
 
 

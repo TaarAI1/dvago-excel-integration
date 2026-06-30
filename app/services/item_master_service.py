@@ -794,6 +794,16 @@ def build_payload(
 
 # ── Per-row processor ───────────────────────────────────────────────────────────
 
+def _is_inactive_error(resp_json: dict) -> bool:
+    """Return True when RetailPro refuses the save because the item is inactive."""
+    errors = resp_json.get("errors") or []
+    return any(
+        (e.get("errorcode") or "") == "Inventory.21"
+        or "inactive item cannot be changed" in (e.get("errormsg") or "").lower()
+        for e in errors
+    )
+
+
 async def process_row(
     row: dict,
     auth_session: str,
@@ -904,6 +914,62 @@ async def process_row(
 
         # Success: errors is null AND data array is non-empty
         ok = (api_errors is None) and (len(saved_data) > 0)
+
+        # ── 7b. Inactive-item recovery ───────────────────────────────────────
+        # If RetailPro rejects the save because the item is inactive
+        # (Inventory.21), activate it first and then re-send the full payload.
+        if not ok and _is_inactive_error(save_json):
+            existing_for_act = check_data[0] if len(check_data) > 0 else None
+            item_sid_raw = existing_for_act.get("sid") if existing_for_act else None
+            if item_sid_raw is not None:
+                try:
+                    item_sid_int = int(str(item_sid_raw).split(".")[0])
+                except (ValueError, TypeError):
+                    item_sid_int = None
+
+                if item_sid_int is not None:
+                    # Build minimal activation payload from CSV fields
+                    act_primary: dict = {"sid": item_sid_int}
+                    for _json_k, _csv_col in [
+                        ("description1", "DESCRIPTION1"),
+                        ("description2", "DESCRIPTION2"),
+                        ("attribute",    "ATTRIBUTE"),
+                        ("itemsize",     "ITEM_SIZE"),
+                    ]:
+                        _val = str(row.get(_csv_col) or "").strip()
+                        if _val:
+                            act_primary[_json_k] = _val
+                    # Fallback: use DESCRIPTION if DESCRIPTION1 is absent
+                    if "description1" not in act_primary:
+                        _val = str(row.get("DESCRIPTION") or "").strip()
+                        if _val:
+                            act_primary["description1"] = _val
+
+                    act_payload = {
+                        "OriginApplication": "RProPrismWeb",
+                        "PrimaryItemDefinition": act_primary,
+                        "InventoryItems": [{"active": True, "sid": item_sid_int}],
+                    }
+                    act_resp = await http.post(
+                        f"{base_url}/api/backoffice/inventory",
+                        params={"action": "InventorySaveItems"},
+                        json={"data": [act_payload]},
+                        headers=rp_headers,
+                    )
+                    act_json = act_resp.json()
+                    act_ok = (act_json.get("errors") is None) and bool(act_json.get("data"))
+                    if act_ok:
+                        # Re-send the original full payload now that item is active
+                        save_resp = await http.post(
+                            f"{base_url}/api/backoffice/inventory",
+                            params={"action": "InventorySaveItems"},
+                            json={"data": [payload]},
+                            headers=rp_headers,
+                        )
+                        save_json = save_resp.json()
+                        saved_data = save_json.get("data") or []
+                        api_errors = save_json.get("errors")
+                        ok = (api_errors is None) and (len(saved_data) > 0)
 
         # Extract SID and UPC from the response
         sid = None
@@ -1062,21 +1128,24 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
     }
 
     base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()
-
-    # Activate the session immediately after obtaining it
-    await sit_session(base_url, auth_session)
-
-    dcs_cache:          dict = {}
-    vend_cache:         dict = {}
-    tax_cache:          dict = {}
-    sbs_cache:          dict = {}
-    pref_reason_cache:  dict = {}
-    store_cache:        dict = {}
+    # Initialise to None so the finally block can safely skip stand_session if
+    # auth fails before auth_session is ever assigned.
+    auth_session: Optional[str] = None
 
     cancelled = False
     results: list[dict] = []
     try:
+        auth_session = await get_auth_session()
+        # Activate the session immediately after obtaining it
+        await sit_session(base_url, auth_session)
+
+        dcs_cache:          dict = {}
+        vend_cache:         dict = {}
+        tax_cache:          dict = {}
+        sbs_cache:          dict = {}
+        pref_reason_cache:  dict = {}
+        store_cache:        dict = {}
+
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as http:
             for row in rows:
                 # Check for kill signal before each row
@@ -1113,11 +1182,16 @@ async def _run_rows_batch(rows: list[dict], source_file: str) -> dict:
                     "✓" if row_result["ok"] else f"✗ {row_result['error']}",
                 )
     finally:
-        # Always destroy the session and clear active state
-        await stand_session(base_url, auth_session)
+        # Always clear the active-import flag so the status endpoint never gets stuck.
         if _active_import_id == import_id:
             _active_import_id = None
         _cancel_requests.discard(import_id)
+        # Only tear-down the session if one was successfully created.
+        if auth_session:
+            try:
+                await stand_session(base_url, auth_session)
+            except Exception as _se:
+                logger.warning("stand_session failed during cleanup: %s", _se)
 
     created = sum(1 for r in results if r["ok"] and r["action"] == "created")
     updated = sum(1 for r in results if r["ok"] and r["action"] == "updated")
@@ -1250,3 +1324,95 @@ async def process_csv_batch(file_bytes: bytes, source_file: str = "item_master_i
     """Parse a CSV file and run the full item master pipeline."""
     rows = parse_csv_item_master(file_bytes)
     return await _run_rows_batch(rows, source_file)
+
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+async def retry_item_master_doc(doc_id: str) -> dict:
+    """Re-process a single failed Item Master document using its stored original_data."""
+    import uuid as _uuid_mod
+    import json as _json
+    from app.db.postgres import get_session
+    from app.models.document import Document
+    from app.services.retailpro_auth import get_auth_session
+    from app.db.settings_store import get_setting
+
+    try:
+        oid = _uuid_mod.UUID(doc_id)
+    except ValueError:
+        raise ValueError("Invalid document ID.")
+
+    async with get_session() as session:
+        doc = await session.get(Document, oid)
+
+    if not doc:
+        raise ValueError("Document not found.")
+    if doc.document_type != "item_master":
+        raise ValueError("Document is not an item master document.")
+    if doc.posted:
+        raise ValueError("Document is already posted.")
+    if not doc.original_data:
+        raise ValueError("No original data stored for this document — cannot retry.")
+
+    # Reconstruct the raw row from original_data, stripping debug-only keys
+    row = {
+        k: v for k, v in doc.original_data.items()
+        if k not in ("_payload_sent", "_dcs_debug", "_vend_debug")
+    }
+
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
+    oc = {
+        "host":         (await get_setting("oracle_host"))         or "",
+        "port":         int((await get_setting("oracle_port"))     or "1521"),
+        "service_name": (await get_setting("oracle_service_name")) or "",
+        "username":     (await get_setting("oracle_username"))     or "",
+        "password":     (await get_setting("oracle_password"))     or "",
+    }
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        result = await process_row(
+            row=row,
+            auth_session=auth_session,
+            oc=oc,
+            base_url=base_url,
+            http=http,
+            dcs_cache={},
+            vend_cache={},
+            tax_cache={},
+            sbs_cache={},
+            pref_reason_cache={},
+            store_cache={},
+        )
+
+    ok = result.get("ok", False)
+    error_msg = result.get("error")
+    safe_row = {k: (_to_json(v)) for k, v in row.items()}
+
+    if ok and result.get("resp_upc") and not safe_row.get("UPC"):
+        safe_row["UPC"] = result["resp_upc"]
+    if not ok and result.get("_payload_sent"):
+        safe_row["_payload_sent"] = _json.dumps(result["_payload_sent"], indent=2, ensure_ascii=False)
+    if result.get("_dcs_debug"):
+        safe_row["_dcs_debug"] = _json.dumps(result["_dcs_debug"], indent=2, ensure_ascii=False)
+    if result.get("_vend_debug"):
+        safe_row["_vend_debug"] = _json.dumps(result["_vend_debug"], indent=2, ensure_ascii=False)
+
+    async with get_session() as session:
+        async with session.begin():
+            d = await session.get(Document, oid)
+            if d:
+                d.original_data = safe_row
+                d.retailprosid  = result.get("sid") if ok else None
+                d.posted        = ok
+                d.has_error     = not ok
+                d.error_message = error_msg
+                d.posted_at     = now_pkt() if ok else None
+
+    return {
+        "ok": ok,
+        "upc": result.get("upc"),
+        "action": result.get("action"),
+        "sid": result.get("sid"),
+        "error": error_msg,
+    }

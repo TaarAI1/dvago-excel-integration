@@ -489,8 +489,41 @@ async def _persist_slip_doc(doc_data: dict) -> None:
     from app.db.postgres import get_session
     from app.models.transfer_slip_doc import TransferSlipDoc
 
+    existing_id = doc_data.get("_existing_id")
+
     async with get_session() as session:
         async with session.begin():
+            if existing_id:
+                doc = await session.get(TransferSlipDoc, existing_id)
+                if doc:
+                    doc.instoresid           = doc_data.get("instoresid")
+                    doc.insbssid             = doc_data.get("insbssid")
+                    doc.outstoresid          = doc_data.get("outstoresid")
+                    doc.outsbssid            = doc_data.get("outsbssid")
+                    doc.slip_sid             = doc_data.get("slip_sid")
+                    doc.item_count           = doc_data.get("item_count", 0)
+                    doc.posted_count         = doc_data.get("posted_count", 0)
+                    doc.error_count          = doc_data.get("error_count", 0)
+                    doc.status               = doc_data.get("status", "pending")
+                    doc.error_message        = doc_data.get("error_message")
+                    doc.error_traceback      = doc_data.get("error_traceback")
+                    doc.api_create_payload   = doc_data.get("api_create_payload")
+                    doc.api_create_response  = doc_data.get("api_create_response")
+                    doc.api_items_payload    = doc_data.get("api_items_payload")
+                    doc.api_items_response   = doc_data.get("api_items_response")
+                    doc.api_comment_payload  = doc_data.get("api_comment_payload")
+                    doc.api_comment_response = doc_data.get("api_comment_response")
+                    doc.api_get_response     = doc_data.get("api_get_response")
+                    doc.api_finalize_payload = doc_data.get("api_finalize_payload")
+                    doc.api_finalize_response= doc_data.get("api_finalize_response")
+                    doc.api_verify_get_response = doc_data.get("api_verify_get_response")
+                    doc.api_verify_payload   = doc_data.get("api_verify_payload")
+                    doc.api_verify_response  = doc_data.get("api_verify_response")
+                    doc.items_data           = doc_data.get("items_data")
+                    doc.raw_rows             = doc_data.get("raw_rows")
+                    if doc_data.get("status") == "posted":
+                        doc.posted_at = now_pkt()
+                    return
             doc = TransferSlipDoc(
                 id=_uuid.uuid4(),
                 source_file=doc_data.get("source_file"),
@@ -521,6 +554,7 @@ async def _persist_slip_doc(doc_data: dict) -> None:
                 api_verify_payload=doc_data.get("api_verify_payload"),
                 api_verify_response=doc_data.get("api_verify_response"),
                 items_data=doc_data.get("items_data"),
+                raw_rows=doc_data.get("raw_rows"),
                 posted_at=now_pkt() if doc_data.get("status") == "posted" else None,
             )
             session.add(doc)
@@ -538,6 +572,7 @@ async def _process_note_group(
     oc: dict,
     store_sids_cache: dict,
     item_info_cache: dict,
+    existing_doc_id=None,
 ) -> dict:
     """
     Process all rows for a single note group (one transfer slip document).
@@ -562,6 +597,8 @@ async def _process_note_group(
         "status":        "error",
         "error_message": None,
         "items_data":    [],
+        "raw_rows":      rows,
+        "_existing_id":  existing_doc_id,
     }
 
     try:
@@ -1033,6 +1070,7 @@ async def retry_transfer_slip_doc(doc_id: str) -> dict:
         "username":     (await get_setting("oracle_username"))     or "",
         "password":     (await get_setting("oracle_password"))     or "",
     }
+
 
     # Duplicate check before retry — prevents re-posting an already-finalised note
     # in cases where RetailPro succeeded but a network error left the local status as error/partial.

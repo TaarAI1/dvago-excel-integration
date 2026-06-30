@@ -35,11 +35,18 @@ async def import_status(_: str = Depends(get_current_user)):
 
 @router.post("/kill")
 async def kill_import(_: str = Depends(get_current_user)):
-    """Cancel the running import — it will stop after the current row finishes."""
-    from app.services.item_master_service import request_cancel_import, get_active_import_id
+    """Cancel the running import — it will stop after the current row finishes.
+    Also force-clears any stuck active-import state."""
+    from app.services.item_master_service import (
+        request_cancel_import, get_active_import_id,
+        _cancel_requests,
+    )
+    import app.services.item_master_service as _svc
     active = get_active_import_id()
     if not active:
-        return {"cancelled": False, "message": "No import is currently running."}
+        # Force-clear in case state is stuck from a crashed import
+        _svc._active_import_id = None
+        return {"cancelled": False, "message": "No import is currently running (state cleared)."}
     request_cancel_import()
     return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current row completes."}
 
@@ -138,7 +145,9 @@ async def import_csv(
         logger.exception("Item master CSV import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("item_master", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "item_master"))
     return result
 
 
@@ -179,7 +188,9 @@ async def import_excel(
         logger.exception("Item master import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("item_master", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "item_master"))
     return result
 
 
@@ -239,8 +250,9 @@ async def download_batch_csv(
 
     for doc in docs:
         row = {k: v for k, v in (doc.original_data or {}).items() if k not in SKIP_KEYS}
-        # Failed items get a blank UPC regardless of what was in the source file
-        if not doc.posted:
+        # Blank UPC only when there was genuinely no UPC in the source data
+        # and RetailPro could not assign one (i.e. item failed with no UPC at all).
+        if not doc.posted and not str(row.get("UPC") or "").strip():
             row["UPC"] = ""
         writer.writerow(row)
 
@@ -254,3 +266,36 @@ async def download_batch_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
     )
+
+
+@router.post("/docs/{doc_id}/retry")
+async def retry_item_master_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed Item Master document using its stored data."""
+    from app.services.item_master_service import retry_item_master_doc
+    from app.db.postgres import get_session
+    from app.models.document import Document
+    import uuid
+    try:
+        result = await retry_item_master_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Item master retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    async with get_session() as session:
+        doc = await session.get(Document, uuid.UUID(doc_id))
+    if not doc:
+        return result
+    return {
+        "id": str(doc.id),
+        "document_type": doc.document_type,
+        "original_data": doc.original_data,
+        "retailprosid": doc.retailprosid,
+        "posted": doc.posted,
+        "has_error": doc.has_error,
+        "error_message": doc.error_message,
+        "source_file": doc.source_file,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "posted_at": doc.posted_at.isoformat() if doc.posted_at else None,
+    }

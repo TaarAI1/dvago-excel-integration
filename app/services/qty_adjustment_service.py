@@ -336,8 +336,35 @@ async def _persist_adj_doc(doc_data: dict) -> None:
     from app.db.postgres import get_session
     from app.models.qty_adjustment_doc import QtyAdjustmentDoc
 
+    existing_id = doc_data.get("_existing_id")
+
     async with get_session() as session:
         async with session.begin():
+            if existing_id:
+                doc = await session.get(QtyAdjustmentDoc, existing_id)
+                if doc:
+                    doc.store_sid       = doc_data.get("store_sid")
+                    doc.sbs_sid         = doc_data.get("sbs_sid")
+                    doc.adj_sid         = doc_data.get("adj_sid")
+                    doc.item_count      = doc_data.get("item_count", 0)
+                    doc.posted_count    = doc_data.get("posted_count", 0)
+                    doc.error_count     = doc_data.get("error_count", 0)
+                    doc.status          = doc_data.get("status", "pending")
+                    doc.error_message   = doc_data.get("error_message")
+                    doc.api_create_payload   = doc_data.get("api_create_payload")
+                    doc.api_create_response  = doc_data.get("api_create_response")
+                    doc.api_items_payload    = doc_data.get("api_items_payload")
+                    doc.api_items_response   = doc_data.get("api_items_response")
+                    doc.api_get_response     = doc_data.get("api_get_response")
+                    doc.api_finalize_payload = doc_data.get("api_finalize_payload")
+                    doc.api_finalize_response= doc_data.get("api_finalize_response")
+                    doc.api_comment_payload  = doc_data.get("api_comment_payload")
+                    doc.api_comment_response = doc_data.get("api_comment_response")
+                    doc.items_data      = doc_data.get("items_data")
+                    doc.raw_rows        = doc_data.get("raw_rows")
+                    if doc_data.get("status") == "posted":
+                        doc.posted_at = now_pkt()
+                    return
             doc = QtyAdjustmentDoc(
                 id=_uuid.uuid4(),
                 source_file=doc_data.get("source_file"),
@@ -362,14 +389,27 @@ async def _persist_adj_doc(doc_data: dict) -> None:
                 api_comment_payload=doc_data.get("api_comment_payload"),
                 api_comment_response=doc_data.get("api_comment_response"),
                 items_data=doc_data.get("items_data"),
+                raw_rows=doc_data.get("raw_rows"),
                 posted_at=now_pkt() if doc_data.get("status") == "posted" else None,
             )
             session.add(doc)
 
 
-# ── Already-processed guard ────────────────────────────────────────────────────
+# ── Already-processed guard (Oracle) ─────────────────────────────────────────
 
-# ── Note batch processor ───────────────────────────────────────────────────────
+async def _is_qty_note_processed_in_oracle(note: str, oc: dict) -> bool:
+    """Return True if Oracle has a finalized qty adjustment (adj_type=0) with this note."""
+    result = await _oracle_scalar(
+        f"SELECT a.sid FROM rps.adjustment a "
+        f"JOIN rps.adj_comment ac ON a.sid = ac.adj_sid "
+        f"WHERE a.status = 4 "
+        f"AND ac.comments = '{note}' "
+        f"AND a.adj_type = 0",
+        oc,
+    )
+    return result is not None
+
+
 
 async def _process_note_batch(
     note: str,
@@ -384,6 +424,7 @@ async def _process_note_batch(
     item_info_cache: dict,
     item_qty_cache: dict,
     adj_reason_sid: Optional[str] = None,
+    existing_doc_id=None,
 ) -> dict:
     """Process all rows for a single NOTE as one adjustment document."""
     store_code = str(rows[0].get("STORE_CODE", "")).strip() or "1"
@@ -406,7 +447,21 @@ async def _process_note_batch(
         "status": "error",
         "error_message": None,
         "items_data": [],
+        "raw_rows": rows,
+        "_existing_id": existing_doc_id,
     }
+
+    # Guard: skip notes already finalized in RetailPro Oracle (bypassed on retry)
+    if note and not existing_doc_id:
+        try:
+            if await _is_qty_note_processed_in_oracle(note, oc):
+                logger.info("[QtyAdj] Note '%s' already processed in RetailPro — skipping", note)
+                doc_data["error_message"] = f"{note} already processed in RetailPro"
+                doc_data["error_count"] = len(rows)
+                await _persist_adj_doc(doc_data)
+                return doc_data
+        except Exception as guard_exc:
+            logger.warning("[QtyAdj] Could not check duplicate note '%s' in Oracle: %s", note, guard_exc)
 
     if not store_sid:
         logger.warning("No store SID found for store_code=%s — skipping %d rows", store_code, len(rows))
@@ -682,27 +737,29 @@ async def process_qty_adjustment_csv(
     }
 
     base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()
-    await sit_session(base_url, auth_session)
-
-    # Group rows by NOTE — each unique note = one adjustment document
-    note_groups: dict[str, list[dict]] = {}
-    for row in rows:
-        n = str(row.get("NOTE", "") or "").strip()
-        note_groups.setdefault(n, []).append(row)
-
-    store_sid_cache: dict = {}
-    sbs_sid_cache: dict = {}
-    item_info_cache: dict = {}
-    item_qty_cache: dict = {}
-
-    adj_reason_sid = await _get_adj_reason_sid(oc)
-    if not adj_reason_sid:
-        logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
+    auth_session: Optional[str] = None
 
     cancelled = False
     all_docs: list[dict] = []
     try:
+        auth_session = await get_auth_session()
+        await sit_session(base_url, auth_session)
+
+        # Group rows by NOTE — each unique note = one adjustment document
+        note_groups: dict[str, list[dict]] = {}
+        for row in rows:
+            n = str(row.get("NOTE", "") or "").strip()
+            note_groups.setdefault(n, []).append(row)
+
+        store_sid_cache: dict = {}
+        sbs_sid_cache: dict = {}
+        item_info_cache: dict = {}
+        item_qty_cache: dict = {}
+
+        adj_reason_sid = await _get_adj_reason_sid(oc)
+        if not adj_reason_sid:
+            logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
+
         _timeout = httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
@@ -729,10 +786,14 @@ async def process_qty_adjustment_csv(
                 )
                 all_docs.append(doc)
     finally:
-        await stand_session(base_url, auth_session)
         if _active_import_id == import_id:
             _active_import_id = None
         _cancel_requests.discard(import_id)
+        if auth_session:
+            try:
+                await stand_session(base_url, auth_session)
+            except Exception as _se:
+                logger.warning("[QtyAdj] stand_session failed during cleanup: %s", _se)
 
     total_docs   = len(all_docs)
     posted_docs  = sum(1 for d in all_docs if d.get("status") == "posted")
@@ -758,3 +819,58 @@ async def process_qty_adjustment_csv(
         "completed_at":     batch_completed_at.strftime("%d-%b-%Y %H:%M:%S"),
         "duration_seconds": duration_seconds,
     }
+
+
+# ── Retry ─────────────────────────────────────────────────────────────────────
+
+async def retry_qty_adj_doc(doc_id: str) -> dict:
+    """Re-run the full pipeline for a single failed QTY adjustment doc."""
+    import uuid as _uuid_mod
+    from app.db.postgres import get_session
+    from app.models.qty_adjustment_doc import QtyAdjustmentDoc
+    from app.services.retailpro_auth import get_auth_session
+    from app.db.settings_store import get_setting
+
+    try:
+        oid = _uuid_mod.UUID(doc_id)
+    except ValueError:
+        raise ValueError("Invalid document ID.")
+
+    async with get_session() as session:
+        doc = await session.get(QtyAdjustmentDoc, oid)
+
+    if not doc:
+        raise ValueError("Document not found.")
+    if doc.status == "posted":
+        raise ValueError("Document is already posted.")
+    if not doc.raw_rows:
+        raise ValueError("No raw CSV data stored for this document — cannot retry.")
+
+    base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+    auth_session = await get_auth_session()
+    oc = {
+        "host":         (await get_setting("oracle_host"))         or "",
+        "port":         int((await get_setting("oracle_port"))     or "1521"),
+        "service_name": (await get_setting("oracle_service_name")) or "",
+        "username":     (await get_setting("oracle_username"))     or "",
+        "password":     (await get_setting("oracle_password"))     or "",
+    }
+    adj_reason_sid = (await get_setting("adj_reason_sid")) or None
+
+    async with httpx.AsyncClient(timeout=120) as http:
+        result = await _process_note_batch(
+            note=doc.note or "",
+            rows=doc.raw_rows,
+            source_file=doc.source_file or "retry",
+            base_url=base_url,
+            auth_session=auth_session,
+            http=http,
+            oc=oc,
+            store_sid_cache={},
+            sbs_sid_cache={},
+            item_info_cache={},
+            item_qty_cache={},
+            adj_reason_sid=adj_reason_sid,
+            existing_doc_id=oid,
+        )
+    return result

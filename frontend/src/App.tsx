@@ -11,6 +11,8 @@ import ItemMasterPage from './pages/ItemMasterPage'
 import ImportsPage from './pages/ImportsPage'
 import ExportsPage from './pages/ExportsPage'
 import NetworkPage from './pages/NetworkPage'
+import ErrorLogsPage from './pages/ErrorLogsPage'
+import ReportsPage from './pages/ReportsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10000 } },
@@ -165,6 +167,8 @@ function AppLayout() {
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/network" element={<NetworkPage />} />
+          <Route path="/errors" element={<ErrorLogsPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Box>

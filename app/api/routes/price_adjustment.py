@@ -121,13 +121,34 @@ async def import_status(_: str = Depends(get_current_user)):
 
 @router.post("/kill")
 async def kill_import(_: str = Depends(get_current_user)):
-    """Cancel the running import — stops after the current store finishes."""
+    """Cancel the running import — stops after the current store finishes.
+    Also force-clears any stuck active-import state."""
     from app.services.price_adjustment_service import request_cancel_import, get_active_import_id
+    import app.services.price_adjustment_service as _svc
     active = get_active_import_id()
     if not active:
-        return {"cancelled": False, "message": "No import is currently running."}
+        _svc._active_import_id = None
+        return {"cancelled": False, "message": "No import is currently running (state cleared)."}
     request_cancel_import()
     return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current store completes."}
+
+
+@router.post("/docs/{doc_id}/retry")
+async def retry_price_adj_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed Price Adjustment document."""
+    from app.services.price_adjustment_service import retry_price_adj_doc
+    import uuid
+    try:
+        result = await retry_price_adj_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Price adjustment retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    async with get_session() as session:
+        doc = await session.get(PriceAdjustmentDoc, uuid.UUID(doc_id))
+    return price_adj_doc_to_response(doc) if doc else result
 
 
 @router.post("/import")
@@ -153,5 +174,7 @@ async def import_price_adjustment(
         logger.exception("Price adjustment import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("price_adjustment", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "price_adjustment"))
     return result

@@ -15,6 +15,8 @@ import time
 import uuid as _uuid
 from datetime import datetime
 
+import polars as pl
+
 from app.core.timezone import now_pkt
 from app.db.postgres import get_session
 from app.db.settings_store import get_setting
@@ -81,6 +83,13 @@ def _inject_store(sql: str, store_no: int) -> str:
     return sql
 
 
+def _inject_date(sql: str) -> str:
+    """Replace {date} placeholder with today's date in MM/DD/YYYY format."""
+    from app.core.timezone import now_pkt
+    today = now_pkt().strftime('%m/%d/%Y')
+    return sql.replace('{date}', today)
+
+
 async def _load_oracle_settings() -> dict:
     host    = await get_setting("sales_oracle_host", "")    or await get_setting("oracle_host", "")
     port    = int(await get_setting("sales_oracle_port", "1521") or "1521")
@@ -132,14 +141,16 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
 
     logger.info("Sales export job started. run_id=%s triggered_by=%s", run_id, triggered_by)
 
-    oc           = await _load_oracle_settings()
-    sql_template = (await get_setting("sales_export_sql", "")) or ""
-    ftp_host     = await get_setting("ftp_host",     "localhost")
-    ftp_port     = int(await get_setting("ftp_port", "21") or "21")
-    ftp_user     = await get_setting("ftp_user",     "anonymous")
-    ftp_password = (await get_setting("ftp_password", "") or "")
-    export_path  = (await get_setting("ftp_export_path", "/exports") or "/exports")
-    prefix       = (await get_setting("sales_export_filename_prefix", "sales_export") or "sales_export")
+    oc                  = await _load_oracle_settings()
+    sql_template        = _inject_date((await get_setting("sales_export_sql", "")) or "")
+    ftp_host            = await get_setting("ftp_host",     "localhost")
+    ftp_port            = int(await get_setting("ftp_port", "21") or "21")
+    ftp_user            = await get_setting("ftp_user",     "anonymous")
+    ftp_password        = (await get_setting("ftp_password", "") or "")
+    export_path         = (await get_setting("ftp_export_path", "/exports") or "/exports")
+    prefix              = (await get_setting("sales_export_filename_prefix", "sales_export") or "sales_export")
+    return_sql_template = _inject_date((await get_setting("return_sale_sql", "")) or "")
+    return_prefix       = (await get_setting("return_sale_filename_prefix", "return_sale") or "return_sale")
 
     if not oc["host"] or not oc["service"] or not sql_template:
         msg = "Sales export skipped: Oracle host, service name, or SQL query not configured."
@@ -223,6 +234,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
     # ── Per-store loop ───────────────────────────────────────────────────────
     timestamp = started_at.strftime('%Y%m%d_%H%M%S')
     results: list[dict] = []
+    sales_dfs: list = []   # collect DFs for consolidated file
 
     for idx, (store_no, store_name) in enumerate(store_list):
         # Check cancellation before each store
@@ -251,6 +263,7 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
             run_id=run_id,
             store_no=store_no,
             store_name=store_name,
+            file_type="sales",
             filename=filename,
             ftp_path=export_path,
             status="processing",
@@ -331,6 +344,9 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
             results.append({"store_no": store_no, "status": "failed", "error": str(exc)})
             continue
 
+        # Collect DF for consolidated file regardless of FTP outcome
+        sales_dfs.append(df)
+
         # ── FTP upload ───────────────────────────────────────────────────────
         try:
             await asyncio.to_thread(
@@ -383,6 +399,153 @@ async def run_sales_export(triggered_by: str = "scheduler") -> dict:
 
         await _update_run(run_id, processed_stores=idx + 1)
         _progress[run_id]["done"] = idx + 1
+
+    # ── Consolidated sales file ───────────────────────────────────────────────
+    if sales_dfs:
+        try:
+            consolidated_df       = pl.concat(sales_dfs)
+            consolidated_csv      = consolidated_df.write_csv().encode("utf-8")
+            consolidated_rows     = max(0, consolidated_csv.count(b'\n') - 1)
+            consolidated_filename = f"{prefix}_consolidated_{timestamp}.csv"
+            c_start               = time.monotonic()
+            await asyncio.to_thread(
+                upload_file, consolidated_csv, consolidated_filename,
+                ftp_host, ftp_port, ftp_user, ftp_password, export_path,
+            )
+            c_dur = round((time.monotonic() - c_start) * 1000, 2)
+            logger.info("Sales consolidated file: %s rows → %s", consolidated_rows, consolidated_filename)
+            consolidated_row = SalesExportStore(
+                id=str(_uuid.uuid4()), run_id=run_id,
+                store_no=None, store_name="ALL STORES",
+                file_type="sales_consolidated",
+                filename=consolidated_filename, ftp_path=export_path,
+                query_rows=consolidated_rows, written_rows=consolidated_rows,
+                status="success", duration_ms=c_dur,
+            )
+            try:
+                await _save_store(consolidated_row)
+            except Exception as dbe:
+                logger.error("DB save failed for consolidated sales: %s", dbe)
+        except Exception as exc:
+            logger.error("Consolidated sales file failed: %s", exc)
+
+    # ── Return sale loop (runs only if return_sale_sql is configured) ────────
+    return_dfs: list = []
+    if return_sql_template:
+        for store_no, store_name in store_list:
+            if _is_cancelled(run_id):
+                break
+            return_filename = f"{return_prefix}_{store_no}_{timestamp}.csv"
+            return_sql      = _inject_store(return_sql_template, store_no)
+            store_start     = time.monotonic()
+            try:
+                df = await run_query(
+                    oc["host"], oc["port"], oc["service"], oc["user"], oc["pwd"],
+                    return_sql,
+                )
+                if df is None or df.is_empty():
+                    logger.info("Return sale export store %s: no data — skipped", store_no)
+                    ret_row = SalesExportStore(
+                        id=str(_uuid.uuid4()), run_id=run_id,
+                        store_no=store_no, store_name=store_name,
+                        file_type="return",
+                        filename=None, ftp_path=export_path,
+                        query_rows=0, written_rows=0,
+                        status="skipped",
+                        error_message="No data returned — file not created",
+                        duration_ms=round((time.monotonic() - store_start) * 1000, 2),
+                    )
+                    try:
+                        await _save_store(ret_row)
+                    except Exception as dbe:
+                        logger.error("DB save failed for return store %s: %s", store_no, dbe)
+                    results.append({"store_no": store_no, "type": "return", "status": "skipped", "rows": 0})
+                    continue
+
+                return_dfs.append(df)
+                csv_bytes    = df.write_csv().encode("utf-8")
+                written_rows = max(0, csv_bytes.count(b'\n') - 1)
+                query_rows   = len(df)
+                await asyncio.to_thread(
+                    upload_file, csv_bytes, return_filename,
+                    ftp_host, ftp_port, ftp_user, ftp_password, export_path,
+                )
+                duration_ms = round((time.monotonic() - store_start) * 1000, 2)
+                logger.info("Return sale export store %s: %s rows → %s", store_no, written_rows, return_filename)
+                ret_row = SalesExportStore(
+                    id=str(_uuid.uuid4()), run_id=run_id,
+                    store_no=store_no, store_name=store_name,
+                    file_type="return",
+                    filename=return_filename, ftp_path=export_path,
+                    query_rows=query_rows, written_rows=written_rows,
+                    status="success", duration_ms=duration_ms,
+                )
+                try:
+                    await _save_store(ret_row)
+                except Exception as dbe:
+                    logger.error("DB save failed for return store %s: %s", store_no, dbe)
+                async with get_session() as session:
+                    async with session.begin():
+                        await write_log(session, activity_type="sales_export", status="success",
+                                        details=f"Return Sale Export Store {store_no}: {written_rows} rows → {return_filename}",
+                                        duration_ms=duration_ms,
+                                        metadata={"run_id": run_id, "store_no": store_no, "type": "return",
+                                                  "written_rows": written_rows, "filename": return_filename})
+                results.append({"store_no": store_no, "type": "return", "status": "success",
+                                 "written_rows": written_rows, "filename": return_filename})
+            except Exception as exc:
+                duration_ms = round((time.monotonic() - store_start) * 1000, 2)
+                msg = f"Return Sale Export Store {store_no}: failed — {exc}"
+                logger.error(msg)
+                ret_row = SalesExportStore(
+                    id=str(_uuid.uuid4()), run_id=run_id,
+                    store_no=store_no, store_name=store_name,
+                    file_type="return",
+                    filename=None, ftp_path=export_path,
+                    query_rows=0, written_rows=0,
+                    status="failed", error_message=str(exc),
+                    duration_ms=duration_ms,
+                )
+                try:
+                    await _save_store(ret_row)
+                except Exception as dbe:
+                    logger.error("DB save failed for return store %s: %s", store_no, dbe)
+                async with get_session() as session:
+                    async with session.begin():
+                        await write_log(session, activity_type="sales_export", status="failed",
+                                        details=msg, duration_ms=duration_ms,
+                                        metadata={"run_id": run_id, "store_no": store_no,
+                                                  "type": "return", "error": str(exc)})
+                results.append({"store_no": store_no, "type": "return", "status": "failed", "error": str(exc)})
+
+        # ── Consolidated return file ──────────────────────────────────────────
+        if return_dfs:
+            try:
+                ret_consolidated_df       = pl.concat(return_dfs)
+                ret_consolidated_csv      = ret_consolidated_df.write_csv().encode("utf-8")
+                ret_consolidated_rows     = max(0, ret_consolidated_csv.count(b'\n') - 1)
+                ret_consolidated_filename = f"{return_prefix}_consolidated_{timestamp}.csv"
+                rc_start                  = time.monotonic()
+                await asyncio.to_thread(
+                    upload_file, ret_consolidated_csv, ret_consolidated_filename,
+                    ftp_host, ftp_port, ftp_user, ftp_password, export_path,
+                )
+                rc_dur = round((time.monotonic() - rc_start) * 1000, 2)
+                logger.info("Return consolidated file: %s rows → %s", ret_consolidated_rows, ret_consolidated_filename)
+                ret_consolidated_row = SalesExportStore(
+                    id=str(_uuid.uuid4()), run_id=run_id,
+                    store_no=None, store_name="ALL STORES",
+                    file_type="return_consolidated",
+                    filename=ret_consolidated_filename, ftp_path=export_path,
+                    query_rows=ret_consolidated_rows, written_rows=ret_consolidated_rows,
+                    status="success", duration_ms=rc_dur,
+                )
+                try:
+                    await _save_store(ret_consolidated_row)
+                except Exception as dbe:
+                    logger.error("DB save failed for consolidated return: %s", dbe)
+            except Exception as exc:
+                logger.error("Consolidated return file failed: %s", exc)
 
     # ── Finalize run ─────────────────────────────────────────────────────────
     ok_count   = sum(1 for r in results if r["status"] == "success")

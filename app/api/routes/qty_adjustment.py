@@ -1,5 +1,5 @@
 """
-Quantity Adjustment routes.
+Quantity Adjustment routes. 
 
 GET  /api/qty-adjustment/batches   – one row per source_file with counts
 GET  /api/qty-adjustment/docs      – paginated list of adjustment documents
@@ -121,13 +121,34 @@ async def import_status(_: str = Depends(get_current_user)):
 
 @router.post("/kill")
 async def kill_import(_: str = Depends(get_current_user)):
-    """Cancel the running import — stops after the current store finishes."""
+    """Cancel the running import — stops after the current store finishes.
+    Also force-clears any stuck active-import state."""
     from app.services.qty_adjustment_service import request_cancel_import, get_active_import_id
+    import app.services.qty_adjustment_service as _svc
     active = get_active_import_id()
     if not active:
-        return {"cancelled": False, "message": "No import is currently running."}
+        _svc._active_import_id = None
+        return {"cancelled": False, "message": "No import is currently running (state cleared)."}
     request_cancel_import()
     return {"cancelled": True, "import_id": active, "message": "Stop signal sent — will halt after current store completes."}
+
+
+@router.post("/docs/{doc_id}/retry")
+async def retry_qty_adj_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed QTY adjustment document."""
+    from app.services.qty_adjustment_service import retry_qty_adj_doc
+    try:
+        result = await retry_qty_adj_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("QTY adjustment retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    import uuid
+    async with get_session() as session:
+        doc = await session.get(QtyAdjustmentDoc, uuid.UUID(doc_id))
+    return qty_adj_doc_to_response(doc) if doc else result
 
 
 @router.post("/import")
@@ -153,5 +174,7 @@ async def import_qty_adjustment(
         logger.exception("QTY adjustment import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("qty_adjustment", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "qty_adjustment"))
     return result

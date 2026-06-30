@@ -407,6 +407,17 @@ export default function SettingsPage() {
               <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_grn_import_path', 'GRN Import Path')}</Grid>
             </Grid>
 
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Manual Export</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('ftp_manual_export_path', 'Manual Export Path')}</Grid>
+            </Grid>
+            <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af', mt: 1 }}>
+              Manually imported files are saved here under sub-folders: <strong>item_master</strong>, <strong>grn</strong>, <strong>transfer_slip</strong>, <strong>qty_adjustment</strong>, <strong>price_adjustment</strong>.
+            </Typography>
+
             <TestButton label="Test FTP" onClick={testFtp} result={ftpResult} />
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="ftp" />
@@ -615,6 +626,20 @@ export default function SettingsPage() {
                 {'<prefix>_YYYYMMDD_HHMMSS.csv'}
               </code>
             </Typography>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Return Sale Settings</Typography>
+            </Divider>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12 }}>{F('return_sale_sql', 'SQL Query')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('return_sale_filename_prefix', 'Filename Prefix')}</Grid>
+            </Grid>
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
+              Output: <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 3 }}>
+                {'<prefix>_YYYYMMDD_HHMMSS.csv'}
+              </code>
+            </Typography>
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="sales_export" />
           </TabPanel>
@@ -642,9 +667,26 @@ export default function SettingsPage() {
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_from_email', 'From Email *', false, smtpErrors['smtp_from_email'])}</Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email',   'To Email *',   false, smtpErrors['smtp_to_email'])}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email',   'Default To Email *', false, smtpErrors['smtp_to_email'])}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_reply_to',   'Reply To')}</Grid>
               <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_cc_email',   'CC Email')}</Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Per-Module Error Report Recipients</Typography>
+            </Divider>
+
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mb: 2 }}>
+              After each import finishes, a summary email with a CSV attachment of all errors is sent to the address below.
+              Leave blank to use the Default To Email above.
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_item_master',      'Item Master — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_qty_adjustment',   'Qty Adjustment — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_price_adjustment', 'Price Adjustment — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_transfer_slip',    'Transfer Slip — Error Report Email')}</Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>{F('smtp_to_email_grn',              'GRN — Error Report Email')}</Grid>
             </Grid>
 
             <Divider sx={{ my: 2.5 }} />

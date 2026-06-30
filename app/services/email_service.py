@@ -108,7 +108,7 @@ async def _fetch_item_master_errors(batch_key: str) -> list[dict]:
             "created_at":       doc.created_at.isoformat() if doc.created_at else "",
         }
         # Spread every original source-file field as its own column.
-        # UPC is kept as-is: empty string when the source had no UPC ΓÇö never a placeholder.
+        # UPC is kept as-is: empty string when the source had no UPC — never a placeholder.
         for k, v in od.items():
             row[k] = "" if v is None else v
         rows.append(row)
@@ -194,7 +194,7 @@ async def _get_error_rows(module: str, batch_key: str) -> list[dict]:
     return []
 
 
-# ΓöÇΓöÇ CSV builder ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# ── CSV builder ───────────────────────────────────────────────────────────────
 
 def _build_csv(error_rows: list[dict]) -> bytes:
     """Serialize *error_rows* to UTF-8 CSV bytes (BOM included for Excel)."""
@@ -217,7 +217,7 @@ def _build_csv(error_rows: list[dict]) -> bytes:
     return "\ufeff".encode("utf-8") + output.getvalue().encode("utf-8")
 
 
-# ΓöÇΓöÇ HTML email builder ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# ── HTML email builder ───────────────────────────────────────────────────────
 
 def _tr(label: str, value, good: bool = True) -> str:
     colour = "#15803d" if good else "#b91c1c"
@@ -330,7 +330,7 @@ def _error_table(error_rows: list[dict], module: str) -> str:
     for i, row in enumerate(preview_rows, 1):
         bg  = "#ffffff" if i % 2 else "#fafafa"
         err = str(row.get("error_message", row.get("item_error", "")))[:300]
-        # UPC: show the real value or leave blank ΓÇö never use a placeholder
+        # UPC: show the real value or leave blank — never use a placeholder
         _raw_id  = row.get(id_key, row.get("item_upc", None))
         id_val   = str(_raw_id) if _raw_id is not None and str(_raw_id).strip() else ""
         desc_val = str(row.get(desc_key, "") or "")
@@ -350,7 +350,7 @@ def _error_table(error_rows: list[dict], module: str) -> str:
         footer = (
             f'<tr><td colspan="4" style="padding:8px 10px;text-align:center;'
             f'color:#9ca3af;font-size:11px;font-style:italic">'
-            f'... and {more} more error{"s" if more != 1 else ""} - see attached CSV for full details'
+            f'… and {more} more error{"s" if more != 1 else ""} — see attached CSV for full details'
             f'</td></tr>'
         )
 
@@ -535,6 +535,7 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
         # Derive a safe filename for the CSV attachment
         safe_batch = batch_key.replace("::", "_").replace("/", "_").replace("\\", "_")
         csv_filename = f"{module}_errors_{safe_batch}.csv"
+
 
         def _send() -> None:
             # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
@@ -814,7 +815,8 @@ async def send_digest_email(
         html    = _build_digest_html(digest_data, since, until)
 
         def _send() -> None:
-            msg = MIMEMultipart("alternative")
+            # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
+            msg = MIMEMultipart("mixed")
             msg["From"]    = smtp["from_email"]
             msg["To"]      = smtp["to_email"]
             msg["Subject"] = subject
@@ -822,7 +824,21 @@ async def send_digest_email(
                 msg["Reply-To"] = smtp["reply_to"]
             if smtp.get("cc_email"):
                 msg["Cc"] = smtp["cc_email"]
-            msg.attach(MIMEText(html, "html", "utf-8"))
+
+            # HTML body
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html", "utf-8"))
+            msg.attach(alt)
+
+            # CSV attachment (only when there are errors)
+            if csv_bytes:
+                attachment = MIMEBase("text", "csv", charset="utf-8")
+                attachment.set_payload(csv_bytes)
+                encoders.encode_base64(attachment)
+                attachment.add_header(
+                    "Content-Disposition", "attachment", filename=csv_filename
+                )
+                msg.attach(attachment)
 
             if smtp["use_tls"]:
                 server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=20)

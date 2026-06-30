@@ -68,7 +68,9 @@ async def import_grn(
         logger.exception("GRN import failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    from app.services.ftp_service import save_manual_import_to_ftp
     asyncio.create_task(send_batch_email("grn", batch_key, result))
+    asyncio.create_task(save_manual_import_to_ftp(raw, base_name, "grn"))
     return result
 
 
@@ -159,3 +161,21 @@ async def get_grn_doc(doc_id: str, _: str = Depends(get_current_user)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
     return grn_doc_to_response(doc)
+
+
+@router.post("/docs/{doc_id}/retry")
+async def retry_grn_doc_endpoint(doc_id: str, _: str = Depends(get_current_user)):
+    """Retry a single failed GRN document."""
+    from app.services.grn_service import retry_grn_doc
+    import uuid
+    try:
+        result = await retry_grn_doc(doc_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("GRN retry failed for doc %s", doc_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    async with get_session() as session:
+        doc = await session.get(GRNDoc, uuid.UUID(doc_id))
+    return grn_doc_to_response(doc) if doc else result

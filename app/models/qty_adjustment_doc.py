@@ -37,6 +37,8 @@ class QtyAdjustmentDoc(Base):
 
     # Per-item detail: [{upc, adj_value, item_sid, ok, error}]
     items_data: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Raw parsed CSV rows stored for retry
+    raw_rows: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_pkt, nullable=False, index=True)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
