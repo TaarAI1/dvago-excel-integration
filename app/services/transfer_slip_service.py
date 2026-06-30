@@ -319,6 +319,7 @@ async def _create_transfer_slip(
         f"{base_url}/api/backoffice/transferslip",
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()
@@ -358,6 +359,7 @@ async def _post_slip_items(
         f"{base_url}/api/backoffice/transferslip/{slip_sid}/slipitem",
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()
@@ -390,6 +392,7 @@ async def _post_slip_comment(
         params={"comments": note, "slipsid": slip_sid},
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()

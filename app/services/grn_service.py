@@ -394,6 +394,7 @@ async def _create_grn_doc(
         f"{base_url}/api/backoffice/receiving",
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()
@@ -486,6 +487,7 @@ async def _post_grn_items(
         f"{base_url}/api/backoffice/receiving/{vousid}/recvitem",
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()
@@ -518,6 +520,7 @@ async def _post_grn_comment(
         params={"comments": note},
         json=payload,
         headers=_rp_headers(auth_session),
+        idempotent=False,
     )
     try:
         resp_json = resp.json()
