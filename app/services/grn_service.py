@@ -464,36 +464,38 @@ async def _post_grn_items(
     auth_session: str,
     vousid: str,
     items: list[dict],
-) -> tuple[dict, dict]:
+) -> tuple[list[dict], list[dict]]:
     """
-    POST /api/backoffice/receiving/{vousid}/recvitem
-    items: [{"item_sid": …, "qty": …}]
-    Returns (payload_sent, response_json).
+    POST each item individually to /api/backoffice/receiving/{vousid}/recvitem.
+    Returns (list_of_payloads, list_of_responses) — one entry per item with item_sid.
     """
-    payload = {
-        "data": [
-            {
+    all_payloads: list[dict] = []
+    all_responses: list[dict] = []
+    for item in items:
+        if not item.get("item_sid"):
+            continue
+        payload = {
+            "data": [{
                 "originapplication": "RProPrismWeb",
                 "itemsid": item["item_sid"],
                 "qty": item["qty"],
                 "vousid": vousid,
-            }
-            for item in items
-            if item.get("item_sid")
-        ]
-    }
-    resp = await http_call_with_retry(
-        http.post,
-        f"{base_url}/api/backoffice/receiving/{vousid}/recvitem",
-        json=payload,
-        headers=_rp_headers(auth_session),
-        idempotent=False,
-    )
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {"raw": resp.text}
-    return payload, resp_json
+            }]
+        }
+        resp = await http_call_with_retry(
+            http.post,
+            f"{base_url}/api/backoffice/receiving/{vousid}/recvitem",
+            json=payload,
+            headers=_rp_headers(auth_session),
+            idempotent=False,
+        )
+        try:
+            resp_json = resp.json()
+        except Exception:
+            resp_json = {"raw": resp.text}
+        all_payloads.append(payload)
+        all_responses.append(resp_json)
+    return all_payloads, all_responses
 
 
 async def _post_grn_comment(
@@ -855,12 +857,29 @@ async def _process_note_group(
             doc_data["api_vendor_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/receiving/{vousid}", **vendor_payload}
             doc_data["api_vendor_response"] = vendor_resp
 
-            # Step 4: Post items
-            items_payload, items_resp = await _post_grn_items(
+            # Step 4: Post items one by one
+            all_item_payloads, all_item_responses = await _post_grn_items(
                 http, base_url, auth_session, vousid, chunk
             )
-            doc_data["api_items_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving/{vousid}/recvitem", **items_payload}
-            doc_data["api_items_response"] = items_resp
+            doc_data["api_items_payload"]  = all_item_payloads
+            doc_data["api_items_response"] = all_item_responses
+
+            # Mark each item ok/error based on its individual response
+            resp_iter = iter(all_item_responses)
+            for item in doc_data["items_data"]:
+                if not item.get("item_sid"):
+                    item["error"] = item.get("error") or "No item SID"
+                    continue
+                resp = next(resp_iter, {})
+                if isinstance(resp, dict) and (resp.get("errors") or resp.get("error")):
+                    item["ok"] = False
+                    item["error"] = str(resp.get("errors") or resp.get("error"))
+                    logger.warning(
+                        "[GRN] recvitem error note='%s' upc=%s: %s",
+                        note, item.get("upc"), item["error"],
+                    )
+                else:
+                    item["ok"] = True
 
             # Step 5: Get updated rowversion (comment step removed — note is in the create payload)
             rowversion2, get_resp2 = await _get_grn_rowversion(http, base_url, auth_session, vousid)
@@ -879,11 +898,6 @@ async def _process_note_group(
             )
             doc_data["api_finalize_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/receiving/{vousid}", **fin_payload}
             doc_data["api_finalize_response"] = fin_resp
-
-            # Mark chunk items as ok
-            for item in doc_data["items_data"]:
-                if item.get("item_sid"):
-                    item["ok"] = True
 
             posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
             errors = len(doc_data["items_data"]) - posted
