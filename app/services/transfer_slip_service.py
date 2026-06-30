@@ -337,35 +337,38 @@ async def _post_slip_items(
     auth_session: str,
     slip_sid: str,
     items: list[dict],  # [{item_sid, qty, upc}]
-) -> tuple[dict, dict]:
+) -> tuple[list[dict], list[dict]]:
     """
-    POST /api/backoffice/transferslip/{slip_sid}/slipitem
-    Returns (payload_sent, response_json).
+    POST each item individually to /api/backoffice/transferslip/{slip_sid}/slipitem.
+    Returns (list_of_payloads, list_of_responses) — one entry per item with item_sid.
     """
-    payload = {
-        "data": [
-            {
+    all_payloads: list[dict] = []
+    all_responses: list[dict] = []
+    for item in items:
+        if not item.get("item_sid"):
+            continue
+        payload = {
+            "data": [{
                 "originapplication": "RProPrismWeb",
                 "qty": item["qty"],
                 "itemsid": item["item_sid"],
                 "slipsid": slip_sid,
-            }
-            for item in items
-            if item.get("item_sid")
-        ]
-    }
-    resp = await http_call_with_retry(
-        http.post,
-        f"{base_url}/api/backoffice/transferslip/{slip_sid}/slipitem",
-        json=payload,
-        headers=_rp_headers(auth_session),
-        idempotent=False,
-    )
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {"raw": resp.text}
-    return payload, resp_json
+            }]
+        }
+        resp = await http_call_with_retry(
+            http.post,
+            f"{base_url}/api/backoffice/transferslip/{slip_sid}/slipitem",
+            json=payload,
+            headers=_rp_headers(auth_session),
+            idempotent=False,
+        )
+        try:
+            resp_json = resp.json()
+        except Exception:
+            resp_json = {"raw": resp.text}
+        all_payloads.append(payload)
+        all_responses.append(resp_json)
+    return all_payloads, all_responses
 
 
 async def _post_slip_comment(
@@ -743,12 +746,29 @@ async def _process_note_group(
 
         doc_data["items_data"] = items_detail
 
-        # ── Step 5: Post slip items ───────────────────────────────────────────
-        items_payload, items_resp = await _post_slip_items(
+        # ── Step 5: Post slip items one by one ───────────────────────────────
+        all_item_payloads, all_item_responses = await _post_slip_items(
             http, base_url, auth_session, slip_sid, items_for_api
         )
-        doc_data["api_items_payload"]  = {"_url": f"POST {base_url}/api/backoffice/transferslip/{slip_sid}/slipitem", **items_payload}
-        doc_data["api_items_response"] = items_resp
+        doc_data["api_items_payload"]  = all_item_payloads
+        doc_data["api_items_response"] = all_item_responses
+
+        # Mark each item ok/error based on its individual response
+        resp_iter = iter(all_item_responses)
+        for item in items_detail:
+            if not item.get("item_sid"):
+                item["error"] = item.get("error") or "No item SID"
+                continue
+            resp = next(resp_iter, {})
+            if isinstance(resp, dict) and (resp.get("errors") or resp.get("error")):
+                item["ok"] = False
+                item["error"] = str(resp.get("errors") or resp.get("error"))
+                logger.warning(
+                    "[TransferSlip] slipitem error note='%s' upc=%s: %s",
+                    note, item.get("upc"), item["error"],
+                )
+            else:
+                item["ok"] = True
 
         # ── Step 6: Post comment (note) ───────────────────────────────────────
         comment_payload, comment_resp = await _post_slip_comment(
@@ -800,11 +820,6 @@ async def _process_note_group(
         # doc_data["api_verify_payload"]  = {"_url": f"PUT {base_url}/api/backoffice/transferslip/{slip_sid}", **verify_payload}
         # doc_data["api_verify_response"] = verify_resp
         # ──────────────────────────────────────────────────────────────────────
-
-        # Mark items that were resolved as ok
-        for item in doc_data["items_data"]:
-            if item.get("item_sid"):
-                item["ok"] = True
 
         posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
         errors = len(doc_data["items_data"]) - posted
