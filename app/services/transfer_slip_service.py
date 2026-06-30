@@ -842,6 +842,25 @@ async def _note_already_processed(note: str, oc: dict) -> bool:
     return note in processed
 
 
+async def _note_already_in_local_db(note: str) -> bool:
+    """
+    Check the local PostgreSQL transfer_slip_docs table for a previously
+    posted/partial record with this note. Fastest guard — does not hit Oracle.
+    """
+    from app.db.postgres import get_session
+    from app.models.transfer_slip_doc import TransferSlipDoc
+    from sqlalchemy import select
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(TransferSlipDoc.id)
+            .where(TransferSlipDoc.note == note)
+            .where(TransferSlipDoc.status.in_(["posted", "partial"]))
+            .limit(1)
+        )
+        return result.scalar() is not None
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 async def process_transfer_slip_csv(
