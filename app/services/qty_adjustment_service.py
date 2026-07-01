@@ -18,6 +18,7 @@ Processing pipeline:
      e. PUT  /api/backoffice/adjustment/{adj_sid}  → status 4
   7. Persist each adjustment document to qty_adjustment_docs table
 """
+import asyncio
 import csv
 import io
 import logging
@@ -588,31 +589,63 @@ async def _process_note_batch(
         for idx, item in enumerate(items_for_api):
             if not item.get("item_sid"):
                 continue
-            i_payload, i_resp, i_status = await _post_adj_items(
-                http, base_url, auth_session, adj_sid, item
-            )
-            all_items_payloads.append(i_payload)
-            all_items_responses.append(i_resp)
 
-            i_ok = i_status < 400
-            if i_ok and isinstance(i_resp, dict):
-                if i_resp.get("errors") or i_resp.get("error"):
-                    i_ok = False
+            # Attempt the POST; on timeout/network error wait 30 s and retry once
+            for attempt in range(2):
+                try:
+                    i_payload, i_resp, i_status = await _post_adj_items(
+                        http, base_url, auth_session, adj_sid, item
+                    )
+                    all_items_payloads.append(i_payload)
+                    all_items_responses.append(i_resp)
 
-            if not i_ok:
-                _i_err_detail = None
-                if isinstance(i_resp, dict):
-                    _i_err_detail = i_resp.get("errors") or i_resp.get("error")
-                items_detail[idx]["error"] = (
-                    f"POST adjitem HTTP {i_status}"
-                    + (f": {_i_err_detail}" if _i_err_detail else "")
-                )
-                logger.warning(
-                    "[QtyAdj] POST adjitem failed note='%s' adj_sid=%s upc=%s HTTP %d",
-                    note, adj_sid, item.get("upc"), i_status,
-                )
-            else:
-                items_detail[idx]["ok"] = True
+                    i_ok = i_status < 400
+                    if i_ok and isinstance(i_resp, dict):
+                        if i_resp.get("errors") or i_resp.get("error"):
+                            i_ok = False
+
+                    if not i_ok:
+                        _i_err_detail = None
+                        if isinstance(i_resp, dict):
+                            _i_err_detail = i_resp.get("errors") or i_resp.get("error")
+                        items_detail[idx]["error"] = (
+                            f"POST adjitem HTTP {i_status}"
+                            + (f": {_i_err_detail}" if _i_err_detail else "")
+                        )
+                        logger.warning(
+                            "[QtyAdj] POST adjitem failed note='%s' adj_sid=%s upc=%s HTTP %d",
+                            note, adj_sid, item.get("upc"), i_status,
+                        )
+                    else:
+                        items_detail[idx]["ok"] = True
+                    break  # success or HTTP error — no retry needed
+
+                except (httpx.ReadTimeout, httpx.ConnectTimeout,
+                        httpx.ConnectError, httpx.RemoteProtocolError) as net_exc:
+                    if attempt == 0:
+                        logger.warning(
+                            "[QtyAdj] Network error on attempt 1 for upc=%s (%s) — "
+                            "waiting 30 s then retrying",
+                            item.get("upc"), net_exc,
+                        )
+                        await asyncio.sleep(30)
+                    else:
+                        items_detail[idx]["error"] = f"Network error (after retry): {net_exc}"
+                        logger.warning(
+                            "[QtyAdj] POST adjitem failed after retry note='%s' upc=%s: %s",
+                            note, item.get("upc"), net_exc,
+                        )
+
+                except Exception as item_exc:
+                    items_detail[idx]["error"] = f"Unexpected error posting item: {item_exc}"
+                    logger.warning(
+                        "[QtyAdj] POST adjitem unexpected exception note='%s' upc=%s: %s",
+                        note, item.get("upc"), item_exc,
+                    )
+                    break  # non-network errors are not retried
+
+            # 2-second pause between items to avoid overwhelming RetailPro
+            await asyncio.sleep(2)
 
         doc_data["api_items_payload"] = all_items_payloads
         doc_data["api_items_response"] = all_items_responses
@@ -760,7 +793,7 @@ async def process_qty_adjustment_csv(
         if not adj_reason_sid:
             logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
 
-        _timeout = httpx.Timeout(connect=30.0, read=300.0, write=120.0, pool=30.0)
+        _timeout = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
             for note, note_rows in note_groups.items():
                 if _is_import_cancelled(import_id):

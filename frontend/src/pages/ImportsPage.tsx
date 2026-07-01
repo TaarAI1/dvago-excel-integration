@@ -970,7 +970,16 @@ function QtyAdjDetailDialog({ doc, onClose, onRetrySuccess }: {
                       <TableCell sx={tdSx}>
                         {item.ok
                           ? <Chip label="OK" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#f0fdf4', color: '#15803d', border: '1px solid #d1fae5' }} />
-                          : <Chip label={item.error || 'Error'} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', maxWidth: 260 }} />
+                          : <Box>
+                              <Chip label="Error" size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} />
+                              {item.error && (
+                                <Tooltip title={item.error} arrow placement="top">
+                                  <Typography sx={{ fontSize: '0.6rem', color: '#9f1239', mt: 0.3, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'help' }}>
+                                    {item.error}
+                                  </Typography>
+                                </Tooltip>
+                              )}
+                            </Box>
                         }
                       </TableCell>
                     </TableRow>
