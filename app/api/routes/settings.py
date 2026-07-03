@@ -137,6 +137,8 @@ class SmtpTestRequest(BaseModel):
     use_tls: bool = True
     from_email: str = ""
     to_email: str = ""
+    cc_email: str = ""
+    reply_to: str = ""
 
 
 @router.post("/test/smtp")
@@ -147,12 +149,26 @@ async def test_smtp(body: SmtpTestRequest, _: str = Depends(get_current_user)):
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
 
+        def _split(s: str) -> list[str]:
+            return [e.strip() for e in s.split(",") if e.strip()]
+
+        to_list = _split(body.to_email)
+        cc_list = _split(body.cc_email)
+        all_recipients = to_list + cc_list
+
         msg = MIMEMultipart()
-        msg["From"] = body.from_email
-        msg["To"] = body.to_email
+        msg["From"]    = body.from_email
+        msg["To"]      = ", ".join(to_list)
         msg["Subject"] = "Test Email — Dvago Integration"
+        if body.reply_to:
+            msg["Reply-To"] = body.reply_to
+        if cc_list:
+            msg["Cc"] = ", ".join(cc_list)
+
         msg.attach(MIMEText(
             "This is a test email from the Dvago Excel Integration system.\n\n"
+            f"Recipients (To): {', '.join(to_list)}\n"
+            f"CC: {', '.join(cc_list) if cc_list else '(none)'}\n\n"
             "Please do not reply to this message.",
             "plain",
         ))
@@ -167,12 +183,16 @@ async def test_smtp(body: SmtpTestRequest, _: str = Depends(get_current_user)):
 
         if body.username:
             server.login(body.username, body.password)
-        server.sendmail(body.from_email, [body.to_email], msg.as_string())
+        server.sendmail(body.from_email, all_recipients, msg.as_string())
         server.quit()
+        return all_recipients
 
     try:
         await asyncio.to_thread(_send)
-        return {"ok": True, "message": f"Test email sent successfully to {body.to_email}."}
+        def _split(s: str) -> list[str]:
+            return [e.strip() for e in s.split(",") if e.strip()]
+        all_addrs = _split(body.to_email) + _split(body.cc_email)
+        return {"ok": True, "message": f"Test email sent successfully to: {', '.join(all_addrs)}."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -256,6 +256,8 @@ export default function SettingsPage() {
         use_tls:    g('smtp_use_tls') !== 'false',
         from_email: g('smtp_from_email'),
         to_email:   g('smtp_to_email'),
+        cc_email:   g('smtp_cc_email'),
+        reply_to:   g('smtp_reply_to'),
       })
       setSmtpTestResult(r.data)
     } catch {

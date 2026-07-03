@@ -25,6 +25,13 @@ from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
+
+def _split_emails(email_str: str) -> list[str]:
+    """Split a comma-separated email string into a clean list of addresses."""
+    if not email_str:
+        return []
+    return [e.strip() for e in email_str.split(",") if e.strip()]
+
 # ΓöÇΓöÇ Module display names & accent colours ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 MODULE_LABELS: dict[str, str] = {
@@ -538,15 +545,18 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
 
 
         def _send() -> None:
+            to_list  = _split_emails(smtp["to_email"])
+            cc_list  = _split_emails(smtp.get("cc_email", ""))
+
             # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
             msg = MIMEMultipart("mixed")
             msg["From"]    = smtp["from_email"]
-            msg["To"]      = smtp["to_email"]
+            msg["To"]      = ", ".join(to_list)
             msg["Subject"] = subject
             if smtp.get("reply_to"):
                 msg["Reply-To"] = smtp["reply_to"]
-            if smtp.get("cc_email"):
-                msg["Cc"] = smtp["cc_email"]
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
 
             # HTML body
             alt = MIMEMultipart("alternative")
@@ -574,17 +584,13 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
             if smtp["username"]:
                 server.login(smtp["username"], smtp["password"])
 
-            recipients = [smtp["to_email"]]
-            if smtp.get("cc_email"):
-                recipients.append(smtp["cc_email"])
-
-            server.sendmail(smtp["from_email"], recipients, msg.as_string())
+            server.sendmail(smtp["from_email"], to_list + cc_list, msg.as_string())
             server.quit()
 
         await asyncio.to_thread(_send)
         logger.info(
-            "Batch email sent  module=%s  batch=%s  to=%s  csv_rows=%d",
-            module, batch_key, smtp["to_email"], len(error_rows),
+            "Batch email sent  module=%s  batch=%s  to=%s  cc=%s  csv_rows=%d",
+            module, batch_key, smtp["to_email"], smtp.get("cc_email", ""), len(error_rows),
         )
 
     except Exception as exc:
@@ -815,30 +821,23 @@ async def send_digest_email(
         html    = _build_digest_html(digest_data, since, until)
 
         def _send() -> None:
+            to_list  = _split_emails(smtp["to_email"])
+            cc_list  = _split_emails(smtp.get("cc_email", ""))
+
             # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
             msg = MIMEMultipart("mixed")
             msg["From"]    = smtp["from_email"]
-            msg["To"]      = smtp["to_email"]
+            msg["To"]      = ", ".join(to_list)
             msg["Subject"] = subject
             if smtp.get("reply_to"):
                 msg["Reply-To"] = smtp["reply_to"]
-            if smtp.get("cc_email"):
-                msg["Cc"] = smtp["cc_email"]
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
 
             # HTML body
             alt = MIMEMultipart("alternative")
             alt.attach(MIMEText(html, "html", "utf-8"))
             msg.attach(alt)
-
-            # CSV attachment (only when there are errors)
-            if csv_bytes:
-                attachment = MIMEBase("text", "csv", charset="utf-8")
-                attachment.set_payload(csv_bytes)
-                encoders.encode_base64(attachment)
-                attachment.add_header(
-                    "Content-Disposition", "attachment", filename=csv_filename
-                )
-                msg.attach(attachment)
 
             if smtp["use_tls"]:
                 server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=20)
@@ -851,17 +850,13 @@ async def send_digest_email(
             if smtp["username"]:
                 server.login(smtp["username"], smtp["password"])
 
-            recipients = [smtp["to_email"]]
-            if smtp.get("cc_email"):
-                recipients.append(smtp["cc_email"])
-
-            server.sendmail(smtp["from_email"], recipients, msg.as_string())
+            server.sendmail(smtp["from_email"], to_list + cc_list, msg.as_string())
             server.quit()
 
         await asyncio.to_thread(_send)
         logger.info(
-            "Digest email sent  files=%d  to=%s  window=[%s → %s]",
-            total_files, smtp["to_email"], since_str, until_str,
+            "Digest email sent  files=%d  to=%s  cc=%s  window=[%s → %s]",
+            total_files, smtp["to_email"], smtp.get("cc_email", ""), since_str, until_str,
         )
 
     except Exception as exc:
