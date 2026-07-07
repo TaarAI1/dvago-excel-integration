@@ -96,19 +96,29 @@ async def lifespan(app: FastAPI):
     sales_cron         = "0 2 * * *"
     sales_cron_2       = ""
     digest_hours       = 6
+    digest_hours_2     = 0
+    digest_hours_3     = 0
+    dup_hours          = 0
     try:
         from app.db.settings_store import get_setting
-        poll_cron    = (await get_setting("poll_cron_schedule")) or poll_cron
-        sales_cron   = (await get_setting("sales_export_cron"))  or sales_cron
-        sales_cron_2 = (await get_setting("sales_export_cron_2") or "")
-        digest_hours = int((await get_setting("digest_email_interval_hours")) or "6")
+        poll_cron      = (await get_setting("poll_cron_schedule")) or poll_cron
+        sales_cron     = (await get_setting("sales_export_cron"))  or sales_cron
+        sales_cron_2   = (await get_setting("sales_export_cron_2") or "")
+        digest_hours   = int((await get_setting("digest_email_interval_hours")) or "6")
+        digest_hours_2 = int((await get_setting("digest_email_interval_hours_2") or "0") or "0")
+        digest_hours_3 = int((await get_setting("digest_email_interval_hours_3") or "0") or "0")
+        dup_hours      = int((await get_setting("duplication_email_interval_hours") or "0") or "0")
     except Exception as exc:
         logger.warning(f"Could not load cron from DB, using defaults: {exc}")
 
     try:
-        setup_scheduler(poll_cron, sales_cron, sales_cron_2, digest_hours)
+        setup_scheduler(poll_cron, sales_cron, sales_cron_2, digest_hours, digest_hours_2, digest_hours_3, dup_hours)
         scheduler.start()
-        logger.info(f"Scheduler started. FTP cron: {poll_cron}, Sales cron: {sales_cron}, Sales cron 2: {sales_cron_2 or 'not set'}, Digest: every {digest_hours}h")
+        logger.info(
+            f"Scheduler started. FTP: {poll_cron}, Sales: {sales_cron}, "
+            f"Digest: {digest_hours}h/{digest_hours_2 or 'off'}/{digest_hours_3 or 'off'}, "
+            f"Duplication: {dup_hours or 'off'}"
+        )
     except Exception as exc:
         logger.error(f"Scheduler start failed: {exc}")
 

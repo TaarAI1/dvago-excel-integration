@@ -898,23 +898,36 @@ async def send_digest_email(
     digest_data: dict,
     since: "datetime",
     until: "datetime",
+    override_recipients: list[str] | None = None,
 ) -> None:
     """
-    Send the 6-hour periodic import digest email.
+    Send the periodic import digest email.
 
     Parameters
     ----------
     digest_data : dict keyed by module name, each value is a list of file-summary
                   dicts as returned by the digest job collectors.
     since / until : the time window covered by this digest.
+    override_recipients : when provided, send only to these addresses (no CC).
+                          When None, uses the global smtp_to_email + smtp_cc_email.
 
-    Uses the global ``smtp_to_email`` recipient (not module-specific).
     Swallows all exceptions.
     """
     try:
         smtp = await _load_smtp()
-        if not smtp or not smtp["to_email"]:
+        if not smtp:
             logger.debug("SMTP not configured — skipping digest email.")
+            return
+
+        if override_recipients is not None:
+            to_list = override_recipients
+            cc_list: list[str] = []
+        else:
+            to_list = _split_emails(smtp.get("to_email", ""))
+            cc_list = _split_emails(smtp.get("cc_email", ""))
+
+        if not to_list:
+            logger.debug("No digest email recipients — skipping.")
             return
 
         since_str = _fmt_dt(since)
@@ -924,10 +937,6 @@ async def send_digest_email(
         html    = _build_digest_html(digest_data, since, until)
 
         def _send() -> None:
-            to_list  = _split_emails(smtp["to_email"])
-            cc_list  = _split_emails(smtp.get("cc_email", ""))
-
-            # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
             msg = MIMEMultipart("mixed")
             msg["From"]    = smtp["from_email"]
             msg["To"]      = ", ".join(to_list)
@@ -937,7 +946,6 @@ async def send_digest_email(
             if cc_list:
                 msg["Cc"] = ", ".join(cc_list)
 
-            # HTML body
             alt = MIMEMultipart("alternative")
             alt.attach(MIMEText(html, "html", "utf-8"))
             msg.attach(alt)
@@ -959,7 +967,7 @@ async def send_digest_email(
         await asyncio.to_thread(_send)
         logger.info(
             "Digest email sent  files=%d  to=%s  cc=%s  window=[%s → %s]",
-            total_files, smtp["to_email"], smtp.get("cc_email", ""), since_str, until_str,
+            total_files, ", ".join(to_list), ", ".join(cc_list), since_str, until_str,
         )
 
     except Exception as exc:

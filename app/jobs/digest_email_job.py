@@ -5,9 +5,10 @@ Queries all five import modules for records created since the last digest
 was sent, then emails a consolidated summary showing every file processed
 and its posted / error counts.
 
-The interval is configurable via the ``digest_email_interval_hours``
-application setting (default 6 hours).  The last-run timestamp is persisted
-in the ``system_config`` table under ``"last_digest_email_sent"``.
+Three independent digest slots are supported, each with its own interval and
+recipient list.  A separate duplication-email slot uses the default SMTP
+address and CC.  Timestamps are persisted per slot in the ``system_config``
+table.
 """
 import logging
 from datetime import datetime, timedelta
@@ -16,46 +17,61 @@ from app.core.timezone import now_pkt
 
 logger = logging.getLogger(__name__)
 
-_LAST_SENT_KEY = "last_digest_email_sent"
 _DEFAULT_WINDOW_HOURS = 6
 
+# Keys for per-slot interval settings and last-sent timestamps
+_SLOT_INTERVAL_KEYS = {
+    1: "digest_email_interval_hours",
+    2: "digest_email_interval_hours_2",
+    3: "digest_email_interval_hours_3",
+}
+_SLOT_RECIPIENTS_KEYS = {
+    1: "digest_email_recipients_1",
+    2: "digest_email_recipients_2",
+    3: "digest_email_recipients_3",
+}
+_SLOT_LAST_SENT_KEYS = {
+    1: "last_digest_email_sent",
+    2: "last_digest_email_sent_2",
+    3: "last_digest_email_sent_3",
+}
+_DUPLICATION_LAST_SENT_KEY = "last_duplication_email_sent"
 
-async def _get_digest_interval_hours() -> int:
-    """Read configured interval from settings, fallback to 6."""
+
+async def _get_interval_hours(setting_key: str, default: int = _DEFAULT_WINDOW_HOURS) -> int:
     try:
         from app.db.settings_store import get_setting
-        val = await get_setting("digest_email_interval_hours")
-        return max(1, int(val or _DEFAULT_WINDOW_HOURS))
+        val = await get_setting(setting_key)
+        return max(1, int(val or default))
     except Exception:
-        return _DEFAULT_WINDOW_HOURS
+        return default
 
 
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
 
-async def _get_last_sent() -> datetime:
-    """Return the last-sent timestamp, or <interval> hours ago if never sent."""
+async def _get_last_sent(last_sent_key: str, interval_hours: int) -> datetime:
+    """Return the last-sent timestamp for a given key, or <interval> hours ago."""
     from app.db.postgres import get_session
     from app.models.system_config import SystemConfig
 
     async with get_session() as session:
-        row = await session.get(SystemConfig, _LAST_SENT_KEY)
+        row = await session.get(SystemConfig, last_sent_key)
 
     if row and row.value:
         try:
             return datetime.fromisoformat(row.value)
         except ValueError:
             pass
-    window = await _get_digest_interval_hours()
-    return now_pkt() - timedelta(hours=window)
+    return now_pkt() - timedelta(hours=interval_hours)
 
 
-async def _save_last_sent(ts: datetime) -> None:
+async def _save_last_sent(last_sent_key: str, ts: datetime) -> None:
     from app.db.postgres import get_session
     from app.models.system_config import SystemConfig
 
     async with get_session() as session:
         async with session.begin():
-            await session.merge(SystemConfig(key=_LAST_SENT_KEY, value=ts.isoformat()))
+            await session.merge(SystemConfig(key=last_sent_key, value=ts.isoformat()))
 
 
 # ── Per-module data collectors ────────────────────────────────────────────────
@@ -156,48 +172,114 @@ async def _query_doc_module(model_class, since: datetime, until: datetime) -> li
     ]
 
 
-# ── Job entry point ───────────────────────────────────────────────────────────
+# ── Shared data collection ────────────────────────────────────────────────────
 
-async def send_periodic_digest() -> None:
-    """
-    APScheduler job: collect all import activity since the last digest
-    and send a consolidated summary email.
+async def _collect_digest_data(since: datetime, until: datetime) -> dict[str, list[dict]]:
+    from app.models.grn_doc import GRNDoc
+    from app.models.transfer_slip_doc import TransferSlipDoc
+    from app.models.qty_adjustment_doc import QtyAdjustmentDoc
+    from app.models.price_adjustment_doc import PriceAdjustmentDoc
 
-    Safe to call manually.  Swallows all exceptions so it never crashes
-    the scheduler loop.
-    """
+    return {
+        "item_master":      await _query_item_master(since, until),
+        "grn":              await _query_doc_module(GRNDoc,              since, until),
+        "transfer_slip":    await _query_doc_module(TransferSlipDoc,     since, until),
+        "qty_adjustment":   await _query_doc_module(QtyAdjustmentDoc,    since, until),
+        "price_adjustment": await _query_doc_module(PriceAdjustmentDoc,  since, until),
+    }
+
+
+# ── Digest slot jobs (custom recipients, no default CC) ───────────────────────
+
+async def _run_digest_slot(slot: int) -> None:
+    """Core logic for a digest email slot with custom recipients."""
+    tag = f"[DigestEmail-{slot}]"
     try:
-        since = await _get_last_sent()
+        interval_key   = _SLOT_INTERVAL_KEYS[slot]
+        recipients_key = _SLOT_RECIPIENTS_KEYS[slot]
+        last_sent_key  = _SLOT_LAST_SENT_KEYS[slot]
+
+        from app.db.settings_store import get_setting
+        recipients_raw = (await get_setting(recipients_key)) or ""
+        recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+        if not recipients:
+            logger.debug("%s No recipients configured — skipping.", tag)
+            return
+
+        interval_hours = await _get_interval_hours(interval_key)
+        since = await _get_last_sent(last_sent_key, interval_hours)
         until = now_pkt()
 
-        logger.info("[DigestEmail] Collecting activity since %s", since.isoformat())
+        logger.info("%s Collecting activity since %s for %d recipient(s).", tag, since.isoformat(), len(recipients))
 
-        from app.models.grn_doc import GRNDoc
-        from app.models.transfer_slip_doc import TransferSlipDoc
-        from app.models.qty_adjustment_doc import QtyAdjustmentDoc
-        from app.models.price_adjustment_doc import PriceAdjustmentDoc
-
-        digest_data: dict[str, list[dict]] = {
-            "item_master":      await _query_item_master(since, until),
-            "grn":              await _query_doc_module(GRNDoc,              since, until),
-            "transfer_slip":    await _query_doc_module(TransferSlipDoc,     since, until),
-            "qty_adjustment":   await _query_doc_module(QtyAdjustmentDoc,    since, until),
-            "price_adjustment": await _query_doc_module(PriceAdjustmentDoc,  since, until),
-        }
-
+        digest_data = await _collect_digest_data(since, until)
         total_files = sum(len(v) for v in digest_data.values())
-        logger.info("[DigestEmail] %d file entries found across all modules.", total_files)
+        logger.info("%s %d file entries found across all modules.", tag, total_files)
 
         if total_files == 0:
-            logger.info("[DigestEmail] Nothing processed in window — skipping email.")
-            await _save_last_sent(until)
+            logger.info("%s Nothing processed in window — skipping email.", tag)
+            await _save_last_sent(last_sent_key, until)
             return
 
         from app.services.email_service import send_digest_email
-        await send_digest_email(digest_data, since, until)
+        await send_digest_email(digest_data, since, until, override_recipients=recipients)
 
-        await _save_last_sent(until)
-        logger.info("[DigestEmail] Digest sent successfully; window updated to %s.", until.isoformat())
+        await _save_last_sent(last_sent_key, until)
+        logger.info("%s Digest sent; window updated to %s.", tag, until.isoformat())
 
     except Exception as exc:
-        logger.exception("[DigestEmail] Job failed: %s", exc)
+        logger.exception("%s Job failed: %s", tag, exc)
+
+
+async def send_periodic_digest() -> None:
+    """APScheduler job — Digest Email slot 1."""
+    await _run_digest_slot(1)
+
+
+async def send_periodic_digest_2() -> None:
+    """APScheduler job — Digest Email slot 2."""
+    await _run_digest_slot(2)
+
+
+async def send_periodic_digest_3() -> None:
+    """APScheduler job — Digest Email slot 3."""
+    await _run_digest_slot(3)
+
+
+# ── Duplication email job (default SMTP address + CC) ─────────────────────────
+
+async def send_duplication_email() -> None:
+    """
+    APScheduler job — Duplication Email.
+
+    Sends the same import-digest to the default SMTP to_email + CC address.
+    Unlike the digest slots above, recipients are not customised here;
+    the global smtp_to_email and smtp_cc_email settings are used instead.
+    """
+    tag = "[DuplicationEmail]"
+    try:
+        from app.db.settings_store import get_setting
+        interval_hours = await _get_interval_hours("duplication_email_interval_hours")
+        since = await _get_last_sent(_DUPLICATION_LAST_SENT_KEY, interval_hours)
+        until = now_pkt()
+
+        logger.info("%s Collecting activity since %s.", tag, since.isoformat())
+
+        digest_data = await _collect_digest_data(since, until)
+        total_files = sum(len(v) for v in digest_data.values())
+        logger.info("%s %d file entries found across all modules.", tag, total_files)
+
+        if total_files == 0:
+            logger.info("%s Nothing processed in window — skipping email.", tag)
+            await _save_last_sent(_DUPLICATION_LAST_SENT_KEY, until)
+            return
+
+        from app.services.email_service import send_digest_email
+        # No override_recipients → uses default smtp_to_email + smtp_cc_email
+        await send_digest_email(digest_data, since, until)
+
+        await _save_last_sent(_DUPLICATION_LAST_SENT_KEY, until)
+        logger.info("%s Email sent; window updated to %s.", tag, until.isoformat())
+
+    except Exception as exc:
+        logger.exception("%s Job failed: %s", tag, exc)
