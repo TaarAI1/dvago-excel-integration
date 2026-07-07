@@ -41,8 +41,8 @@ def setup_scheduler(
         send_periodic_digest,
         send_periodic_digest_2,
         send_periodic_digest_3,
-        send_duplication_email,
     )
+    from app.jobs.duplication_email_job import send_duplication_email
 
     digest_hours = max(1, int(digest_interval_hours))
 

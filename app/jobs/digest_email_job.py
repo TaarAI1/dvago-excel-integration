@@ -35,7 +35,6 @@ _SLOT_LAST_SENT_KEYS = {
     2: "last_digest_email_sent_2",
     3: "last_digest_email_sent_3",
 }
-_DUPLICATION_LAST_SENT_KEY = "last_duplication_email_sent"
 
 
 async def _get_interval_hours(setting_key: str, default: int = _DEFAULT_WINDOW_HOURS) -> int:
@@ -246,40 +245,3 @@ async def send_periodic_digest_3() -> None:
     await _run_digest_slot(3)
 
 
-# ── Duplication email job (default SMTP address + CC) ─────────────────────────
-
-async def send_duplication_email() -> None:
-    """
-    APScheduler job — Duplication Email.
-
-    Sends the same import-digest to the default SMTP to_email + CC address.
-    Unlike the digest slots above, recipients are not customised here;
-    the global smtp_to_email and smtp_cc_email settings are used instead.
-    """
-    tag = "[DuplicationEmail]"
-    try:
-        from app.db.settings_store import get_setting
-        interval_hours = await _get_interval_hours("duplication_email_interval_hours")
-        since = await _get_last_sent(_DUPLICATION_LAST_SENT_KEY, interval_hours)
-        until = now_pkt()
-
-        logger.info("%s Collecting activity since %s.", tag, since.isoformat())
-
-        digest_data = await _collect_digest_data(since, until)
-        total_files = sum(len(v) for v in digest_data.values())
-        logger.info("%s %d file entries found across all modules.", tag, total_files)
-
-        if total_files == 0:
-            logger.info("%s Nothing processed in window — skipping email.", tag)
-            await _save_last_sent(_DUPLICATION_LAST_SENT_KEY, until)
-            return
-
-        from app.services.email_service import send_digest_email
-        # No override_recipients → uses default smtp_to_email + smtp_cc_email
-        await send_digest_email(digest_data, since, until)
-
-        await _save_last_sent(_DUPLICATION_LAST_SENT_KEY, until)
-        logger.info("%s Email sent; window updated to %s.", tag, until.isoformat())
-
-    except Exception as exc:
-        logger.exception("%s Job failed: %s", tag, exc)

@@ -972,3 +972,80 @@ async def send_digest_email(
 
     except Exception as exc:
         logger.warning("Digest email failed: %s", exc)
+
+
+async def send_duplication_report_email(
+    module: str,
+    issues: list[dict],
+    since: "datetime",
+    until: "datetime",
+    html: str,
+) -> None:
+    """
+    Send a per-module duplication check report to the default SMTP to_email + CC.
+
+    Parameters
+    ----------
+    module  : module key (e.g. "qty_adjustment")
+    issues  : list of issue dicts produced by the duplication job
+    since / until : time window covered
+    html    : pre-built HTML body (built by _build_duplication_html in the job)
+
+    Swallows all exceptions so the scheduler loop is never crashed.
+    """
+    try:
+        smtp = await _load_smtp()
+        if not smtp:
+            logger.debug("SMTP not configured — skipping duplication report email.")
+            return
+
+        to_list = _split_emails(smtp.get("to_email", ""))
+        cc_list = _split_emails(smtp.get("cc_email", ""))
+        if not to_list:
+            logger.debug("No recipients configured — skipping duplication report email.")
+            return
+
+        label = MODULE_LABELS.get(module, module)
+        since_str = since.strftime("%d %b %Y %H:%M")
+        until_str = until.strftime("%d %b %Y %H:%M")
+        subject = (
+            f"[Duplication Check] {label} — {len(issues)} issue{'s' if len(issues) != 1 else ''} found"
+            f" · {since_str} → {until_str}"
+        )
+
+        def _send() -> None:
+            msg = MIMEMultipart("mixed")
+            msg["From"]    = smtp["from_email"]
+            msg["To"]      = ", ".join(to_list)
+            msg["Subject"] = subject
+            if smtp.get("reply_to"):
+                msg["Reply-To"] = smtp["reply_to"]
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
+
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html", "utf-8"))
+            msg.attach(alt)
+
+            if smtp["use_tls"]:
+                server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=20)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+            else:
+                server = smtplib.SMTP_SSL(smtp["host"], smtp["port"], timeout=20)
+
+            if smtp["username"]:
+                server.login(smtp["username"], smtp["password"])
+
+            server.sendmail(smtp["from_email"], to_list + cc_list, msg.as_string())
+            server.quit()
+
+        await asyncio.to_thread(_send)
+        logger.info(
+            "Duplication report sent  module=%s  issues=%d  to=%s  window=[%s → %s]",
+            module, len(issues), ", ".join(to_list), since_str, until_str,
+        )
+
+    except Exception as exc:
+        logger.warning("Duplication report email failed (module=%s): %s", module, exc)
