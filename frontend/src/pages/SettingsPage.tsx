@@ -614,15 +614,14 @@ export default function SettingsPage() {
             </Divider>
 
             <Grid container spacing={2} sx={{ alignItems: 'flex-start' }}>
-              <Grid size={{ xs: 12, sm: 4 }}>{F('duplication_email_interval_hours', 'Send Duplication Email Every (hours, optional)')}</Grid>
-              <Grid size={{ xs: 12, sm: 8 }}>
-                <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 2 }}>
-                  Sends a periodic import summary to the default SMTP To address and CC.
-                  &nbsp;Leave blank to disable.
-                  &nbsp;Changes take effect immediately after saving.
-                </Typography>
-              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('duplication_email_interval_hours', 'Duplication Email — Interval (hours, optional)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('duplication_email_recipients', 'Duplication Email — Recipients (comma-separated)')}</Grid>
             </Grid>
+
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
+              Emails are sent only to the recipients listed above. Leave the interval blank to disable.
+              &nbsp;Changes take effect immediately after saving.
+            </Typography>
 
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="scheduler" />

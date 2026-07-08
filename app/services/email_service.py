@@ -980,16 +980,19 @@ async def send_duplication_report_email(
     since: "datetime",
     until: "datetime",
     html: str,
+    recipients: list[str] | None = None,
 ) -> None:
     """
-    Send a per-module duplication check report to the default SMTP to_email + CC.
+    Send a per-module duplication check report.
 
     Parameters
     ----------
-    module  : module key (e.g. "qty_adjustment")
-    issues  : list of issue dicts produced by the duplication job
-    since / until : time window covered
-    html    : pre-built HTML body (built by _build_duplication_html in the job)
+    module      : module key (e.g. "qty_adjustment")
+    issues      : list of issue dicts produced by the duplication job
+    since/until : time window covered
+    html        : pre-built HTML body
+    recipients  : explicit To list; when provided these are used exclusively
+                  (no CC). Falls back to default smtp_to_email when None.
 
     Swallows all exceptions so the scheduler loop is never crashed.
     """
@@ -999,8 +1002,13 @@ async def send_duplication_report_email(
             logger.debug("SMTP not configured — skipping duplication report email.")
             return
 
-        to_list = _split_emails(smtp.get("to_email", ""))
-        cc_list = _split_emails(smtp.get("cc_email", ""))
+        if recipients is not None:
+            to_list = recipients
+            cc_list: list[str] = []
+        else:
+            to_list = _split_emails(smtp.get("to_email", ""))
+            cc_list = _split_emails(smtp.get("cc_email", ""))
+
         if not to_list:
             logger.debug("No recipients configured — skipping duplication report email.")
             return

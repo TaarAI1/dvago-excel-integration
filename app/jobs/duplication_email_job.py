@@ -511,6 +511,15 @@ async def send_duplication_email() -> None:
             tag, since.isoformat(), until.isoformat(), interval_hours, len(_MODULES),
         )
 
+        # Resolve custom recipients — if none configured, skip sending entirely
+        from app.db.settings_store import get_setting
+        recipients_raw = (await get_setting("duplication_email_recipients")) or ""
+        recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+        if not recipients:
+            logger.info("%s No recipients configured — skipping.", tag)
+            await _save_last_sent(until)
+            return
+
         oracle = await _load_oracle_settings()
         if not oracle:
             logger.warning("%s Oracle not configured — skipping.", tag)
@@ -524,7 +533,7 @@ async def send_duplication_email() -> None:
             issues = await _check_module(mod, oracle, since, until)
             if issues:
                 html = _build_duplication_html(mod["name"], issues, since, until)
-                await send_duplication_report_email(mod["name"], issues, since, until, html)
+                await send_duplication_report_email(mod["name"], issues, since, until, html, recipients)
                 emails_sent += 1
             else:
                 logger.info("%s No issues for %s — email skipped.", tag, mod["name"])

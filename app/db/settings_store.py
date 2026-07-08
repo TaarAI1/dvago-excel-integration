@@ -55,8 +55,9 @@ SETTING_DEFINITIONS = [
     ("digest_email_recipients_2",        "scheduler", "Digest Email 2 — Recipients (comma-separated)","",             False),
     ("digest_email_interval_hours_3",    "scheduler", "Digest Email 3 — Interval (hours)",            "",             False),
     ("digest_email_recipients_3",        "scheduler", "Digest Email 3 — Recipients (comma-separated)","",             False),
-    # Duplication Email — uses default SMTP to_email + CC
-    ("duplication_email_interval_hours", "scheduler", "Duplication Email — Interval (hours)",         "",             False),
+    # Duplication Email — custom recipients, independent of default SMTP
+    ("duplication_email_interval_hours",  "scheduler", "Duplication Email — Interval (hours)",              "",  False),
+    ("duplication_email_recipients",      "scheduler", "Duplication Email — Recipients (comma-separated)",  "",  False),
     # Sales Export
     ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),
