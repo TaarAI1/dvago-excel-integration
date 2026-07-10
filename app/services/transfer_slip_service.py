@@ -298,10 +298,13 @@ async def _create_transfer_slip(
     insbssid: str,
     outstoresid: str,
     outsbssid: str,
+    note: str = "",
 ) -> tuple[Optional[str], dict, dict]:
     """
     POST /api/backoffice/transferslip
     Returns (slip_sid, payload_sent, response_json).
+    The note is sent as ``carriername`` so it is stored on the slip itself
+    in addition to being posted via the comment API.
     """
     payload = {
         "data": [{
@@ -311,6 +314,7 @@ async def _create_transfer_slip(
             "outsbssid": outsbssid,
             "instoresid": instoresid,
             "outstoresid": outstoresid,
+            "carriername": note,
             "verified": True,
         }]
     }
@@ -709,6 +713,7 @@ async def _process_note_group(
             http, base_url, auth_session,
             instoresid, insbssid or "",
             outstoresid, outsbssid or "",
+            note=note,
         )
         doc_data["api_create_payload"]  = {"_url": f"POST {base_url}/api/backoffice/transferslip", **create_payload}
         doc_data["api_create_response"] = create_resp
@@ -1082,6 +1087,7 @@ async def retry_transfer_slip_doc(doc_id: str) -> dict:
     from app.models.transfer_slip_doc import TransferSlipDoc
     from app.services.retailpro_auth import get_auth_session
     from app.db.settings_store import get_setting
+    from app.core.timezone import now_pkt
 
     try:
         oid = _uuid_mod.UUID(doc_id)
@@ -1097,6 +1103,11 @@ async def retry_transfer_slip_doc(doc_id: str) -> dict:
         raise ValueError("Document is already posted.")
     if not doc.raw_rows:
         raise ValueError("No raw CSV data stored for this document — cannot retry.")
+
+    # Capture current state before overwriting
+    old_status      = doc.status
+    old_error       = doc.error_message
+    old_retry_log   = list(doc.retry_log or [])
 
     base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session = await get_auth_session()
@@ -1131,4 +1142,32 @@ async def retry_transfer_slip_doc(doc_id: str) -> dict:
             item_info_cache={},
             existing_doc_id=oid,
         )
+
+    # Build updated retry_log
+    new_log = list(old_retry_log)
+    if not new_log:
+        new_log.append({
+            "attempt": 0,
+            "label": "Initial",
+            "status": old_status,
+            "error_message": old_error,
+            "timestamp": doc.created_at.isoformat() if doc.created_at else now_pkt().isoformat(),
+        })
+    attempt_num = len(new_log)
+    new_log.append({
+        "attempt": attempt_num,
+        "label": f"Retry {attempt_num}",
+        "status": result.get("status", "error"),
+        "error_message": result.get("error_message"),
+        "timestamp": now_pkt().isoformat(),
+    })
+
+    async with get_session() as session:
+        async with session.begin():
+            d = await session.get(TransferSlipDoc, oid)
+            if d:
+                d.retry_log = new_log
+                if result.get("status") == "posted":
+                    d.status = "posted"
+
     return result
