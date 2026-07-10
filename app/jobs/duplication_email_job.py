@@ -165,8 +165,10 @@ async def _oracle_fetch_sids(
 ) -> list[str]:
     """
     Return all SIDs from *table* matching *where_filter* and the time window.
+    Uses TO_CHAR(sid) so the value arrives as a plain string matching what
+    PostgreSQL stores in the adj_sid / slip_sid / vousid text columns.
     Builds:
-      SELECT sid FROM <table>
+      SELECT TO_CHAR(sid) FROM <table>
       WHERE <where_filter>
         AND created_Datetime >= TO_DATE(...)
         AND created_Datetime <= TO_DATE(...)
@@ -174,7 +176,7 @@ async def _oracle_fetch_sids(
     since_str = since.strftime("%Y-%m-%d %H:%M:%S")
     until_str = until.strftime("%Y-%m-%d %H:%M:%S")
     sql = (
-        f"SELECT sid FROM {table}"
+        f"SELECT TO_CHAR(sid) AS sid FROM {table}"
         f" WHERE {where_filter}"
         f"   AND created_Datetime >= TO_DATE('{since_str}', 'YYYY-MM-DD HH24:MI:SS')"
         f"   AND created_Datetime <= TO_DATE('{until_str}', 'YYYY-MM-DD HH24:MI:SS')"
@@ -362,7 +364,7 @@ async def _check_module(mod: dict, oracle: dict, since: datetime, until: datetim
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTML email builder
+# HTML email builder — one email per module
 # ─────────────────────────────────────────────────────────────────────────────
 
 _FLAG_LABELS: dict[str, tuple[str, str]] = {
@@ -374,61 +376,114 @@ _FLAG_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _build_duplication_html(
+def _build_module_html(
     module: str,
     issues: list[dict],
     since: datetime,
     until: datetime,
 ) -> str:
+    """Build the full HTML email for a single module."""
     label      = _MODULE_LABELS.get(module, module)
     accent     = _MODULE_ACCENT.get(module, "#1a56db")
     since_str  = since.strftime("%d %b %Y %H:%M")
     until_str  = until.strftime("%d %b %Y %H:%M")
 
-    rows_html = ""
-    for issue in issues:
-        sid        = issue["sid"]
-        flags      = issue["flags"]
-        pg_cnt     = issue["pg_count"]
-        oracle_cnt = issue["oracle_count"]
-        pg_items   = issue["pg_items"]
-        oracle_items = issue.get("oracle_items")
-        oracle_items_str = str(oracle_items) if oracle_items is not None else "—"
-
-        badges = "".join(
-            f'<span style="display:inline-block;background:{color};color:#fff;'
-            f'padding:2px 8px;border-radius:9999px;font-size:11px;margin-right:4px;">'
-            f'{lbl}</span>'
-            for f in flags
-            for lbl, color in [_FLAG_LABELS.get(f, (f, "#6b7280"))]
-        )
-
-        if "missing_in_app" in flags or "missing_in_retailpro" in flags:
-            row_bg = "#fef2f2"
-        elif "duplicate_in_app" in flags or "duplicate_in_retailpro" in flags:
-            row_bg = "#f5f3ff"
-        elif "item_count_mismatch" in flags:
-            row_bg = "#fff7ed"
-        else:
-            row_bg = "#fff"
-
-        rows_html += (
-            f'<tr style="background:{row_bg};border-bottom:1px solid #e5e7eb;">'
-            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#111827;">{sid}</td>'
-            f'<td style="padding:8px 12px;">{badges}</td>'
-            f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{pg_cnt}</td>'
-            f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{oracle_cnt}</td>'
-            f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{pg_items}</td>'
-            f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{oracle_items_str}</td>'
-            f'</tr>'
-        )
-
     legend_html = "".join(
-        f'<span style="display:inline-flex;align-items:center;margin-right:16px;font-size:11px;color:#374151;">'
-        f'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;'
+        f'<span style="display:inline-flex;align-items:center;margin-right:14px;font-size:11px;color:#374151;">'
+        f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;'
         f'background:{color};margin-right:4px;"></span>{lbl}</span>'
         for lbl, color in _FLAG_LABELS.values()
     )
+
+    # ── No issues: green all-clear body ──────────────────────────────────────
+    if not issues:
+        body_html = (
+            f'<tr><td style="padding:24px 32px;">'
+            f'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:20px 24px;">'
+            f'<p style="margin:0;font-size:15px;color:#15803d;font-weight:600;">'
+            f'&#10003;&nbsp; No Duplications Found</p>'
+            f'<p style="margin:8px 0 0;font-size:13px;color:#166534;">'
+            f'All records for this module match correctly between the Application DB and RetailPro. '
+            f'No missing, duplicate, or item-count issues were detected.</p>'
+            f'</div>'
+            f'</td></tr>'
+        )
+        status_badge = (
+            '<span style="display:inline-block;background:#d1fae5;color:#065f46;'
+            'padding:3px 12px;border-radius:9999px;font-size:12px;font-weight:700;">'
+            '&#10003; All Clear</span>'
+        )
+        status_line = "No issues found — all records match between App and RetailPro."
+    else:
+        # ── Issues table ──────────────────────────────────────────────────────
+        rows_html = ""
+        for issue in issues:
+            sid          = issue["sid"]
+            flags        = issue["flags"]
+            pg_cnt       = issue["pg_count"]
+            oracle_cnt   = issue["oracle_count"]
+            pg_items     = issue["pg_items"]
+            oracle_items = issue.get("oracle_items")
+            oracle_items_str = str(oracle_items) if oracle_items is not None else "—"
+
+            badges = "".join(
+                f'<span style="display:inline-block;background:{color};color:#fff;'
+                f'padding:2px 8px;border-radius:9999px;font-size:11px;margin-right:4px;">'
+                f'{lbl}</span>'
+                for f in flags
+                for lbl, color in [_FLAG_LABELS.get(f, (f, "#6b7280"))]
+            )
+
+            if "missing_in_app" in flags or "missing_in_retailpro" in flags:
+                row_bg = "#fef2f2"
+            elif "duplicate_in_app" in flags or "duplicate_in_retailpro" in flags:
+                row_bg = "#f5f3ff"
+            elif "item_count_mismatch" in flags:
+                row_bg = "#fff7ed"
+            else:
+                row_bg = "#fff"
+
+            rows_html += (
+                f'<tr style="background:{row_bg};border-bottom:1px solid #e5e7eb;">'
+                f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#111827;">{sid}</td>'
+                f'<td style="padding:8px 12px;">{badges}</td>'
+                f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{pg_cnt}</td>'
+                f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{oracle_cnt}</td>'
+                f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{pg_items}</td>'
+                f'<td style="padding:8px 12px;text-align:center;font-size:13px;">{oracle_items_str}</td>'
+                f'</tr>'
+            )
+
+        body_html = (
+            f'<tr><td style="padding:12px 32px 0;">'
+            f'<div style="padding:4px 0;">{legend_html}</div>'
+            f'</td></tr>'
+            f'<tr><td style="padding:16px 32px 32px;">'
+            f'<table width="100%" cellpadding="0" cellspacing="0"'
+            f' style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;">'
+            f'<thead><tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">'
+            f'<th style="padding:10px 12px;text-align:left;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">SID</th>'
+            f'<th style="padding:10px 12px;text-align:left;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Issues</th>'
+            f'<th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">App<br>Count</th>'
+            f'<th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">RetailPro<br>Count</th>'
+            f'<th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">App<br>Items</th>'
+            f'<th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">RetailPro<br>Items</th>'
+            f'</tr></thead>'
+            f'<tbody>{rows_html}</tbody>'
+            f'</table>'
+            f'</td></tr>'
+        )
+
+        status_badge = (
+            f'<span style="display:inline-block;background:#fee2e2;color:#991b1b;'
+            f'padding:3px 12px;border-radius:9999px;font-size:12px;font-weight:700;">'
+            f'&#9888; {len(issues)} Issue{"s" if len(issues) != 1 else ""} Found</span>'
+        )
+        status_line = (
+            f"<strong>{len(issues)}</strong> issue{'s' if len(issues) != 1 else ''} found comparing "
+            f"<strong>Application DB (PostgreSQL)</strong> vs <strong>RetailPro (Oracle)</strong>. "
+            f"Only records marked as <em>posted</em> are included."
+        )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -436,7 +491,8 @@ def _build_duplication_html(
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;">
 <tr><td align="center" style="padding:32px 16px;">
-<table width="720" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.10);max-width:100%;">
+<table width="720" cellpadding="0" cellspacing="0"
+       style="background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.10);max-width:100%;">
 
   <tr><td style="background:{accent};padding:24px 32px;border-radius:8px 8px 0 0;">
     <p style="margin:0;color:rgba(255,255,255,.75);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;">Duplication Check Report</p>
@@ -445,35 +501,11 @@ def _build_duplication_html(
   </td></tr>
 
   <tr><td style="padding:20px 32px 0;">
-    <p style="margin:0;font-size:14px;color:#374151;">
-      <strong>{len(issues)}</strong> issue{'s' if len(issues) != 1 else ''} found comparing
-      <strong>Application DB (PostgreSQL)</strong> vs <strong>RetailPro (Oracle)</strong>.
-      Only records marked as <em>posted</em> in the application are included.
-    </p>
+    <div style="margin-bottom:8px;">{status_badge}</div>
+    <p style="margin:0;font-size:14px;color:#374151;">{status_line}</p>
   </td></tr>
 
-  <tr><td style="padding:12px 32px 0;">
-    <div style="padding:8px 0;">{legend_html}</div>
-  </td></tr>
-
-  <tr><td style="padding:16px 32px 32px;">
-    <table width="100%" cellpadding="0" cellspacing="0"
-           style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;">
-      <thead>
-        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-          <th style="padding:10px 12px;text-align:left;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">SID</th>
-          <th style="padding:10px 12px;text-align:left;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Issues</th>
-          <th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">App<br>Count</th>
-          <th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">RetailPro<br>Count</th>
-          <th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">App<br>Items</th>
-          <th style="padding:10px 12px;text-align:center;color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">RetailPro<br>Items</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows_html}
-      </tbody>
-    </table>
-  </td></tr>
+  {body_html}
 
   <tr><td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 8px 8px;">
     <p style="margin:0;color:#9ca3af;font-size:11px;">
@@ -496,9 +528,9 @@ async def send_duplication_email() -> None:
     """
     APScheduler job — Duplication Check Email.
 
-    Queries both PostgreSQL and Oracle for each configured module, compares
-    records, and sends a separate email per module listing all anomalies.
-    Only triggered when ``duplication_email_interval_hours`` is configured.
+    Sends ONE email per module on every scheduler fire.
+    Issues found    → detailed table of problematic SIDs.
+    No issues found → green "All Clear — No Duplications Found" message.
     """
     tag = "[DuplicationEmail]"
     try:
@@ -511,7 +543,6 @@ async def send_duplication_email() -> None:
             tag, since.isoformat(), until.isoformat(), interval_hours, len(_MODULES),
         )
 
-        # Resolve custom recipients — if none configured, skip sending entirely
         from app.db.settings_store import get_setting
         recipients_raw = (await get_setting("duplication_email_recipients")) or ""
         recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
@@ -528,21 +559,20 @@ async def send_duplication_email() -> None:
 
         from app.services.email_service import send_duplication_report_email
 
-        emails_sent = 0
         for mod in _MODULES:
             issues = await _check_module(mod, oracle, since, until)
-            if issues:
-                html = _build_duplication_html(mod["name"], issues, since, until)
-                await send_duplication_report_email(mod["name"], issues, since, until, html, recipients)
-                emails_sent += 1
-            else:
-                logger.info("%s No issues for %s — email skipped.", tag, mod["name"])
+            html   = _build_module_html(mod["name"], issues, since, until)
+            await send_duplication_report_email(
+                module=mod["name"],
+                issues=issues,
+                since=since,
+                until=until,
+                html=html,
+                recipients=recipients,
+            )
 
         await _save_last_sent(until)
-        logger.info(
-            "%s Done. %d email(s) sent. Window updated to %s.",
-            tag, emails_sent, until.isoformat(),
-        )
+        logger.info("%s All module emails sent. Window updated to %s.", tag, until.isoformat())
 
     except Exception as exc:
         logger.exception("%s Job failed: %s", tag, exc)

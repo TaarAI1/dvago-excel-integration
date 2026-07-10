@@ -983,16 +983,18 @@ async def send_duplication_report_email(
     recipients: list[str] | None = None,
 ) -> None:
     """
-    Send a per-module duplication check report.
+    Send a per-module duplication check report email.
+
+    Always sent on every scheduler fire — shows issues when found, or a green
+    "No Duplications Found" message when the module is clean.
 
     Parameters
     ----------
     module      : module key (e.g. "qty_adjustment")
-    issues      : list of issue dicts produced by the duplication job
+    issues      : list of issue dicts (may be empty for a clean module)
     since/until : time window covered
     html        : pre-built HTML body
-    recipients  : explicit To list; when provided these are used exclusively
-                  (no CC). Falls back to default smtp_to_email when None.
+    recipients  : explicit To list (no CC). Falls back to smtp_to_email when None.
 
     Swallows all exceptions so the scheduler loop is never crashed.
     """
@@ -1002,7 +1004,7 @@ async def send_duplication_report_email(
             logger.debug("SMTP not configured — skipping duplication report email.")
             return
 
-        if recipients is not None:
+        if recipients:
             to_list = recipients
             cc_list: list[str] = []
         else:
@@ -1013,13 +1015,17 @@ async def send_duplication_report_email(
             logger.debug("No recipients configured — skipping duplication report email.")
             return
 
-        label = MODULE_LABELS.get(module, module)
+        label     = MODULE_LABELS.get(module, module)
         since_str = since.strftime("%d %b %Y %H:%M")
         until_str = until.strftime("%d %b %Y %H:%M")
-        subject = (
-            f"[Duplication Check] {label} — {len(issues)} issue{'s' if len(issues) != 1 else ''} found"
-            f" · {since_str} → {until_str}"
-        )
+        n         = len(issues)
+        if n == 0:
+            subject = f"[Duplication Check] {label} — ✓ All Clear · {since_str} → {until_str}"
+        else:
+            subject = (
+                f"[Duplication Check] {label} — ⚠ {n} issue{'s' if n != 1 else ''} found"
+                f" · {since_str} → {until_str}"
+            )
 
         def _send() -> None:
             msg = MIMEMultipart("mixed")
@@ -1052,7 +1058,7 @@ async def send_duplication_report_email(
         await asyncio.to_thread(_send)
         logger.info(
             "Duplication report sent  module=%s  issues=%d  to=%s  window=[%s → %s]",
-            module, len(issues), ", ".join(to_list), since_str, until_str,
+            module, n, ", ".join(to_list), since_str, until_str,
         )
 
     except Exception as exc:
