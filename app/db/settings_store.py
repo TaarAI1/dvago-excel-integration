@@ -45,10 +45,19 @@ SETTING_DEFINITIONS = [
     ("oracle_username",           "oracle",       "Oracle Username",             "",             False),
     ("oracle_password",           "oracle",       "Oracle Password",             "",             True),
     # Scheduler
-    ("poll_cron_schedule",            "scheduler",    "FTP Import Cron",                    "*/15 * * * *", False),
-    ("sales_export_cron",             "scheduler",    "Sales Export Cron (Time 1)",         "0 2 * * *",    False),
-    ("sales_export_cron_2",           "scheduler",    "Sales Export Cron (Time 2)",         "",             False),
-    ("digest_email_interval_hours",   "scheduler",    "Digest Email Interval (hours)",      "6",            False),
+    ("poll_cron_schedule",               "scheduler", "FTP Import Cron",                              "*/15 * * * *", False),
+    ("sales_export_cron",                "scheduler", "Sales Export Cron (Time 1)",                   "0 2 * * *",    False),
+    ("sales_export_cron_2",              "scheduler", "Sales Export Cron (Time 2)",                   "",             False),
+    # Digest Email — 3 independent slots, each with its own interval and recipient list
+    ("digest_email_interval_hours",      "scheduler", "Digest Email 1 — Interval (hours)",            "6",            False),
+    ("digest_email_recipients_1",        "scheduler", "Digest Email 1 — Recipients (comma-separated)","",             False),
+    ("digest_email_interval_hours_2",    "scheduler", "Digest Email 2 — Interval (hours)",            "",             False),
+    ("digest_email_recipients_2",        "scheduler", "Digest Email 2 — Recipients (comma-separated)","",             False),
+    ("digest_email_interval_hours_3",    "scheduler", "Digest Email 3 — Interval (hours)",            "",             False),
+    ("digest_email_recipients_3",        "scheduler", "Digest Email 3 — Recipients (comma-separated)","",             False),
+    # Duplication Email — custom recipients, independent of default SMTP
+    ("duplication_email_interval_hours",  "scheduler", "Duplication Email — Interval (hours)",              "",  False),
+    ("duplication_email_recipients",      "scheduler", "Duplication Email — Recipients (comma-separated)",  "",  False),
     # Sales Export
     ("sales_export_sql",              "sales_export", "Sales SQL Query",              "SELECT * FROM sales WHERE ROWNUM <= 1000", False),
     ("sales_export_filename_prefix",  "sales_export", "Output Filename Prefix",       "sales_export", False),

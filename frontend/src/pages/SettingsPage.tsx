@@ -586,16 +586,42 @@ export default function SettingsPage() {
               <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Digest Email Schedule</Typography>
             </Divider>
 
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mb: 2 }}>
+              Each slot runs independently on its own interval and delivers to its own recipient list.
+              Leave the interval blank to disable that slot. Recipients must be comma-separated email addresses.
+            </Typography>
+
+            {/* Digest Slot 1 */}
             <Grid container spacing={2} sx={{ alignItems: 'flex-start' }}>
-              <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours', 'Send Digest Email Every (hours)')}</Grid>
-              <Grid size={{ xs: 12, sm: 8 }}>
-                <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 2 }}>
-                  A summary email of all import activity is sent automatically at this interval (minimum 1 hour).
-                  &nbsp;The email covers only files processed since the previous digest.
-                  &nbsp;Changes take effect immediately after saving.
-                </Typography>
-              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours', 'Digest Email 1 — Interval (hours)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('digest_email_recipients_1', 'Digest Email 1 — Recipients (comma-separated)')}</Grid>
             </Grid>
+
+            {/* Digest Slot 2 */}
+            <Grid container spacing={2} sx={{ alignItems: 'flex-start', mt: 1 }}>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours_2', 'Digest Email 2 — Interval (hours, optional)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('digest_email_recipients_2', 'Digest Email 2 — Recipients (comma-separated)')}</Grid>
+            </Grid>
+
+            {/* Digest Slot 3 */}
+            <Grid container spacing={2} sx={{ alignItems: 'flex-start', mt: 1 }}>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('digest_email_interval_hours_3', 'Digest Email 3 — Interval (hours, optional)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('digest_email_recipients_3', 'Digest Email 3 — Recipients (comma-separated)')}</Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2.5 }}>
+              <Typography sx={{ fontSize: '0.75rem', color: '#6b7280', px: 1 }}>Duplication Email Schedule</Typography>
+            </Divider>
+
+            <Grid container spacing={2} sx={{ alignItems: 'flex-start' }}>
+              <Grid size={{ xs: 12, sm: 4 }}>{F('duplication_email_interval_hours', 'Duplication Email — Interval (hours, optional)')}</Grid>
+              <Grid size={{ xs: 12, sm: 8 }}>{F('duplication_email_recipients', 'Duplication Email — Recipients (comma-separated)')}</Grid>
+            </Grid>
+
+            <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', mt: 1.5 }}>
+              Emails are sent only to the recipients listed above. Leave the interval blank to disable.
+              &nbsp;Changes take effect immediately after saving.
+            </Typography>
 
             <Divider sx={{ my: 2.5 }} />
             <SaveBtn cat="scheduler" />

@@ -201,7 +201,90 @@ async def _get_error_rows(module: str, batch_key: str) -> list[dict]:
     return []
 
 
-# ── CSV builder ───────────────────────────────────────────────────────────────
+async def _fetch_success_rows(
+    batch_key: str,
+    model_class,
+    sid_field: str,
+    sid_label: str,
+    extra_fields: list[tuple[str, str]] | None = None,
+) -> list[dict]:
+    """
+    Return one CSV row per posted/partial document.
+    sid_field  : attribute name on the model (e.g. 'vousid', 'slip_sid', 'adj_sid')
+    sid_label  : column header in the CSV (e.g. 'retailpro_voucher_sid')
+    extra_fields: additional (attr_name, csv_label) pairs inserted after the SID column
+    """
+    from sqlalchemy import select
+    from app.db.postgres import get_session
+
+    async with get_session() as session:
+        res = await session.execute(
+            select(model_class)
+            .where(
+                model_class.source_file == batch_key,
+                model_class.status.in_(["posted", "partial"]),
+            )
+            .order_by(model_class.created_at.asc())
+        )
+        docs = res.scalars().all()
+
+    rows: list[dict] = []
+    for i, doc in enumerate(docs, 1):
+        row: dict = {
+            "#":            i,
+            "note":         getattr(doc, "note",         None) or "",
+            "store_code":   getattr(doc, "store_code",   None) or "",
+            "store_name":   getattr(doc, "store_name",   None) or getattr(doc, "out_store_name", None) or "",
+            sid_label:      getattr(doc, sid_field,      None) or "",
+        }
+        for attr, label in (extra_fields or []):
+            row[label] = getattr(doc, attr, None) or ""
+        row.update({
+            "item_count":   getattr(doc, "item_count",   ""),
+            "posted_count": getattr(doc, "posted_count", ""),
+            "error_count":  getattr(doc, "error_count",  ""),
+            "status":       doc.status,
+            "posted_at":    (doc.posted_at.isoformat() if doc.posted_at else "") if hasattr(doc, "posted_at") else "",
+            "created_at":   doc.created_at.isoformat() if doc.created_at else "",
+        })
+        rows.append(row)
+    return rows
+
+
+async def _get_success_rows(module: str, batch_key: str) -> list[dict]:
+    """Return success rows for modules that track a RetailPro SID."""
+    if module == "grn":
+        from app.models.grn_doc import GRNDoc
+        return await _fetch_success_rows(
+            batch_key, GRNDoc,
+            sid_field="vousid", sid_label="retailpro_voucher_sid",
+            extra_fields=[("vendsid", "vendor_sid"), ("store_code", "store_code")],
+        )
+
+    if module == "transfer_slip":
+        from app.models.transfer_slip_doc import TransferSlipDoc
+        return await _fetch_success_rows(
+            batch_key, TransferSlipDoc,
+            sid_field="slip_sid", sid_label="retailpro_slip_sid",
+            extra_fields=[("in_store_name", "in_store_name"), ("out_store_name", "out_store_name")],
+        )
+
+    if module == "qty_adjustment":
+        from app.models.qty_adjustment_doc import QtyAdjustmentDoc
+        return await _fetch_success_rows(
+            batch_key, QtyAdjustmentDoc,
+            sid_field="adj_sid", sid_label="retailpro_adj_sid",
+        )
+
+    if module == "price_adjustment":
+        from app.models.price_adjustment_doc import PriceAdjustmentDoc
+        return await _fetch_success_rows(
+            batch_key, PriceAdjustmentDoc,
+            sid_field="adj_sid", sid_label="retailpro_adj_sid",
+            extra_fields=[("price_lvl_sid", "price_level_sid")],
+        )
+
+    return []  # item_master doesn't have a doc-level SID
 
 def _build_csv(error_rows: list[dict]) -> bytes:
     """Serialize *error_rows* to UTF-8 CSV bytes (BOM included for Excel)."""
@@ -529,19 +612,23 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
         smtp = await _load_smtp(module)
         if not smtp or not smtp["to_email"]:
             logger.debug(
-                "SMTP not configured ΓÇö skipping batch email for %s / %s",
+                "SMTP not configured — skipping batch email for %s / %s",
                 module, batch_key,
             )
             return
 
-        error_rows = await _get_error_rows(module, batch_key)
+        error_rows   = await _get_error_rows(module, batch_key)
+        success_rows = await _get_success_rows(module, batch_key)
+
         subject    = _build_subject(module, batch_key, result)
         html       = _build_html(module, batch_key, result, error_rows)
         csv_bytes  = _build_csv(error_rows)
+        success_csv_bytes = _build_csv(success_rows)
 
-        # Derive a safe filename for the CSV attachment
+        # Derive safe filenames for the CSV attachments
         safe_batch = batch_key.replace("::", "_").replace("/", "_").replace("\\", "_")
-        csv_filename = f"{module}_errors_{safe_batch}.csv"
+        csv_filename         = f"{module}_errors_{safe_batch}.csv"
+        success_csv_filename = f"{module}_posted_{safe_batch}.csv"
 
 
         def _send() -> None:
@@ -563,7 +650,7 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
             alt.attach(MIMEText(html, "html", "utf-8"))
             msg.attach(alt)
 
-            # CSV attachment (only when there are errors)
+            # Error CSV attachment (only when there are errors)
             if csv_bytes:
                 attachment = MIMEBase("text", "csv", charset="utf-8")
                 attachment.set_payload(csv_bytes)
@@ -572,6 +659,16 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
                     "Content-Disposition", "attachment", filename=csv_filename
                 )
                 msg.attach(attachment)
+
+            # Success CSV attachment (only when there are posted docs with a SID)
+            if success_csv_bytes:
+                succ_att = MIMEBase("text", "csv", charset="utf-8")
+                succ_att.set_payload(success_csv_bytes)
+                encoders.encode_base64(succ_att)
+                succ_att.add_header(
+                    "Content-Disposition", "attachment", filename=success_csv_filename
+                )
+                msg.attach(succ_att)
 
             if smtp["use_tls"]:
                 server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=20)
@@ -589,8 +686,9 @@ async def send_batch_email(module: str, batch_key: str, result: dict) -> None:
 
         await asyncio.to_thread(_send)
         logger.info(
-            "Batch email sent  module=%s  batch=%s  to=%s  cc=%s  csv_rows=%d",
-            module, batch_key, smtp["to_email"], smtp.get("cc_email", ""), len(error_rows),
+            "Batch email sent  module=%s  batch=%s  to=%s  cc=%s  csv_rows=%d  success_rows=%d",
+            module, batch_key, smtp["to_email"], smtp.get("cc_email", ""),
+            len(error_rows), len(success_rows),
         )
 
     except Exception as exc:
@@ -636,7 +734,8 @@ def _digest_module_section(module: str, files: list[dict]) -> str:
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#15803d;border-bottom:1px solid #e5e7eb'>Posted</th>"
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#b91c1c;border-bottom:1px solid #e5e7eb'>Errors</th>"
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Success%</th>"
-            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Processed At</th>"
+            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Started At</th>"
+            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Completed At</th>"
             "</tr>"
         )
     else:
@@ -649,15 +748,17 @@ def _digest_module_section(module: str, files: list[dict]) -> str:
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#b91c1c;border-bottom:1px solid #e5e7eb'>Error Items</th>"
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#d97706;border-bottom:1px solid #e5e7eb'>Partial Docs</th>"
             "<th style='padding:7px 10px;text-align:center;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Success%</th>"
-            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Processed At</th>"
+            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Started At</th>"
+            "<th style='padding:7px 10px;text-align:left;font-size:11px;color:#6b7280;border-bottom:1px solid #e5e7eb'>Completed At</th>"
             "</tr>"
         )
 
     rows_html = ""
     for i, f in enumerate(files):
-        bg = "#ffffff" if i % 2 == 0 else "#f9fafb"
-        fname = (f["source_file"] or "—").split("::")[0]   # strip timestamp suffix
-        ts    = _fmt_dt(f.get("last_at"))
+        bg         = "#ffffff" if i % 2 == 0 else "#f9fafb"
+        fname      = (f["source_file"] or "—").split("::")[0]   # strip timestamp suffix
+        started_at = _fmt_dt(f.get("first_at"))
+        ended_at   = _fmt_dt(f.get("last_at"))
 
         if is_item_master:
             total  = f.get("total",  0)
@@ -671,7 +772,8 @@ def _digest_module_section(module: str, files: list[dict]) -> str:
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;color:#15803d;font-weight:600;border-bottom:1px solid #f3f4f6'>{posted}</td>"
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;color:{err_col};font-weight:600;border-bottom:1px solid #f3f4f6'>{errors}</td>"
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;border-bottom:1px solid #f3f4f6'>{_pct(posted, total)}</td>"
-                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{ts}</td>"
+                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{started_at}</td>"
+                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{ended_at}</td>"
                 "</tr>"
             )
         else:
@@ -692,7 +794,8 @@ def _digest_module_section(module: str, files: list[dict]) -> str:
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;color:{err_col};font-weight:600;border-bottom:1px solid #f3f4f6'>{error_items}</td>"
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;color:#d97706;border-bottom:1px solid #f3f4f6'>{partial_docs}</td>"
                 f"<td style='padding:6px 10px;font-size:12px;text-align:center;border-bottom:1px solid #f3f4f6'>{_pct(posted_items, total_items)}</td>"
-                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{ts}</td>"
+                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{started_at}</td>"
+                f"<td style='padding:6px 10px;font-size:11px;color:#9ca3af;border-bottom:1px solid #f3f4f6'>{ended_at}</td>"
                 "</tr>"
             )
 
@@ -795,23 +898,36 @@ async def send_digest_email(
     digest_data: dict,
     since: "datetime",
     until: "datetime",
+    override_recipients: list[str] | None = None,
 ) -> None:
     """
-    Send the 6-hour periodic import digest email.
+    Send the periodic import digest email.
 
     Parameters
     ----------
     digest_data : dict keyed by module name, each value is a list of file-summary
                   dicts as returned by the digest job collectors.
     since / until : the time window covered by this digest.
+    override_recipients : when provided, send only to these addresses (no CC).
+                          When None, uses the global smtp_to_email + smtp_cc_email.
 
-    Uses the global ``smtp_to_email`` recipient (not module-specific).
     Swallows all exceptions.
     """
     try:
         smtp = await _load_smtp()
-        if not smtp or not smtp["to_email"]:
+        if not smtp:
             logger.debug("SMTP not configured — skipping digest email.")
+            return
+
+        if override_recipients is not None:
+            to_list = override_recipients
+            cc_list: list[str] = []
+        else:
+            to_list = _split_emails(smtp.get("to_email", ""))
+            cc_list = _split_emails(smtp.get("cc_email", ""))
+
+        if not to_list:
+            logger.debug("No digest email recipients — skipping.")
             return
 
         since_str = _fmt_dt(since)
@@ -821,10 +937,6 @@ async def send_digest_email(
         html    = _build_digest_html(digest_data, since, until)
 
         def _send() -> None:
-            to_list  = _split_emails(smtp["to_email"])
-            cc_list  = _split_emails(smtp.get("cc_email", ""))
-
-            # Use "mixed" so we can attach files; nest HTML in an "alternative" sub-part
             msg = MIMEMultipart("mixed")
             msg["From"]    = smtp["from_email"]
             msg["To"]      = ", ".join(to_list)
@@ -834,7 +946,6 @@ async def send_digest_email(
             if cc_list:
                 msg["Cc"] = ", ".join(cc_list)
 
-            # HTML body
             alt = MIMEMultipart("alternative")
             alt.attach(MIMEText(html, "html", "utf-8"))
             msg.attach(alt)
@@ -856,8 +967,99 @@ async def send_digest_email(
         await asyncio.to_thread(_send)
         logger.info(
             "Digest email sent  files=%d  to=%s  cc=%s  window=[%s → %s]",
-            total_files, smtp["to_email"], smtp.get("cc_email", ""), since_str, until_str,
+            total_files, ", ".join(to_list), ", ".join(cc_list), since_str, until_str,
         )
 
     except Exception as exc:
         logger.warning("Digest email failed: %s", exc)
+
+
+async def send_duplication_report_email(
+    module: str,
+    issues: list[dict],
+    since: "datetime",
+    until: "datetime",
+    html: str,
+    recipients: list[str] | None = None,
+) -> None:
+    """
+    Send a per-module duplication check report email.
+
+    Always sent on every scheduler fire — shows issues when found, or a green
+    "No Duplications Found" message when the module is clean.
+
+    Parameters
+    ----------
+    module      : module key (e.g. "qty_adjustment")
+    issues      : list of issue dicts (may be empty for a clean module)
+    since/until : time window covered
+    html        : pre-built HTML body
+    recipients  : explicit To list (no CC). Falls back to smtp_to_email when None.
+
+    Swallows all exceptions so the scheduler loop is never crashed.
+    """
+    try:
+        smtp = await _load_smtp()
+        if not smtp:
+            logger.debug("SMTP not configured — skipping duplication report email.")
+            return
+
+        if recipients:
+            to_list = recipients
+            cc_list: list[str] = []
+        else:
+            to_list = _split_emails(smtp.get("to_email", ""))
+            cc_list = _split_emails(smtp.get("cc_email", ""))
+
+        if not to_list:
+            logger.debug("No recipients configured — skipping duplication report email.")
+            return
+
+        label     = MODULE_LABELS.get(module, module)
+        since_str = since.strftime("%d %b %Y %H:%M")
+        until_str = until.strftime("%d %b %Y %H:%M")
+        n         = len(issues)
+        if n == 0:
+            subject = f"[Duplication Check] {label} — ✓ All Clear · {since_str} → {until_str}"
+        else:
+            subject = (
+                f"[Duplication Check] {label} — ⚠ {n} issue{'s' if n != 1 else ''} found"
+                f" · {since_str} → {until_str}"
+            )
+
+        def _send() -> None:
+            msg = MIMEMultipart("mixed")
+            msg["From"]    = smtp["from_email"]
+            msg["To"]      = ", ".join(to_list)
+            msg["Subject"] = subject
+            if smtp.get("reply_to"):
+                msg["Reply-To"] = smtp["reply_to"]
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
+
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html", "utf-8"))
+            msg.attach(alt)
+
+            if smtp["use_tls"]:
+                server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=20)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+            else:
+                server = smtplib.SMTP_SSL(smtp["host"], smtp["port"], timeout=20)
+
+            if smtp["username"]:
+                server.login(smtp["username"], smtp["password"])
+
+            server.sendmail(smtp["from_email"], to_list + cc_list, msg.as_string())
+            server.quit()
+
+        await asyncio.to_thread(_send)
+        logger.info(
+            "Duplication report sent  module=%s  issues=%d  to=%s  window=[%s → %s]",
+            module, n, ", ".join(to_list), since_str, until_str,
+        )
+
+    except Exception as exc:
+        logger.warning("Duplication report email failed (module=%s): %s", module, exc)
