@@ -175,8 +175,9 @@ async def _oracle_fetch_sids(
     """
     since_str = since.strftime("%Y-%m-%d %H:%M:%S")
     until_str = until.strftime("%Y-%m-%d %H:%M:%S")
+    # TRIM removes the leading space Oracle's TO_CHAR adds to numeric columns.
     sql = (
-        f"SELECT TO_CHAR(sid) AS sid FROM {table}"
+        f"SELECT TRIM(TO_CHAR(sid)) AS sid FROM {table}"
         f" WHERE {where_filter}"
         f"   AND created_Datetime >= TO_DATE('{since_str}', 'YYYY-MM-DD HH24:MI:SS')"
         f"   AND created_Datetime <= TO_DATE('{until_str}', 'YYYY-MM-DD HH24:MI:SS')"
@@ -190,7 +191,7 @@ async def _oracle_fetch_sids(
         if df.is_empty():
             return []
         col = df.columns[0]
-        return [str(v) for v in df[col].to_list() if v is not None]
+        return [str(v).strip() for v in df[col].to_list() if v is not None]
     except Exception as exc:
         logger.warning("[DupCheck] Oracle SID query failed (%s): %s", table, exc)
         return []
