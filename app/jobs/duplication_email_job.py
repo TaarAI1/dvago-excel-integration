@@ -156,31 +156,26 @@ def _safe_sid(sid: str) -> str:
     return "".join(c for c in sid if c.isalnum() or c in ("-", "_", "."))
 
 
-async def _oracle_fetch_sids(
+async def _oracle_check_sid_count(
     oracle: dict,
     table: str,
     where_filter: str,
-    since: datetime,
-    until: datetime,
-) -> list[str]:
+    sid: str,
+) -> int:
     """
-    Return all SIDs from *table* matching *where_filter* and the time window.
-    Uses TO_CHAR(sid) so the value arrives as a plain string matching what
-    PostgreSQL stores in the adj_sid / slip_sid / vousid text columns.
+    Return how many rows Oracle holds for *sid* in *table*.
+      0  → SID missing in RetailPro
+      1  → present exactly once (OK)
+      >1 → duplicate in RetailPro
     Builds:
-      SELECT TO_CHAR(sid) FROM <table>
-      WHERE <where_filter>
-        AND created_Datetime >= TO_DATE(...)
-        AND created_Datetime <= TO_DATE(...)
+      SELECT COUNT(*) AS cnt FROM <table>
+      WHERE [<where_filter> AND] sid = '<sid>'
     """
-    since_str = since.strftime("%Y-%m-%d %H:%M:%S")
-    until_str = until.strftime("%Y-%m-%d %H:%M:%S")
-    # TRIM removes the leading space Oracle's TO_CHAR adds to numeric columns.
+    safe = _safe_sid(sid)
+    extra = f"{where_filter} AND " if where_filter else ""
     sql = (
-        f"SELECT TRIM(TO_CHAR(sid)) AS sid FROM {table}"
-        f" WHERE {where_filter}"
-        f"   AND created_Datetime >= TO_DATE('{since_str}', 'YYYY-MM-DD HH24:MI:SS')"
-        f"   AND created_Datetime <= TO_DATE('{until_str}', 'YYYY-MM-DD HH24:MI:SS')"
+        f"SELECT COUNT(*) AS cnt FROM {table}"
+        f" WHERE {extra}sid = '{safe}'"
     )
     from app.services.oracle_service import run_query
     try:
@@ -189,12 +184,12 @@ async def _oracle_fetch_sids(
             oracle["username"], oracle["password"], sql,
         )
         if df.is_empty():
-            return []
+            return 0
         col = df.columns[0]
-        return [str(v).strip() for v in df[col].to_list() if v is not None]
+        return int(df[col][0] or 0)
     except Exception as exc:
-        logger.warning("[DupCheck] Oracle SID query failed (%s): %s", table, exc)
-        return []
+        logger.warning("[DupCheck] Oracle SID check failed (%s, sid=%s): %s", table, sid, exc)
+        return 0
 
 
 async def _oracle_item_counts_batch(
@@ -291,6 +286,12 @@ async def _check_module(mod: dict, oracle: dict, since: datetime, until: datetim
     """
     Run the full duplication check for one module config dict.
     Returns a list of issue dicts, one per problematic SID.
+
+    Strategy: fetch posted SIDs from PostgreSQL for the time window, then
+    query Oracle individually for each SID using COUNT(*).
+      oracle_count == 0  → Missing in RetailPro
+      oracle_count == 1  → present once; also compare item counts
+      oracle_count  > 1  → Duplicate in RetailPro
     """
     name = mod["name"]
     tag  = f"[DupCheck:{name}]"
@@ -299,7 +300,7 @@ async def _check_module(mod: dict, oracle: dict, since: datetime, until: datetim
     module_path, class_name = mod["model"].rsplit(".", 1)
     model_class = getattr(importlib.import_module(module_path), class_name)
 
-    # ── 1. PostgreSQL posted docs ─────────────────────────────────────────────
+    # ── 1. PostgreSQL posted docs in window ───────────────────────────────────
     pg_rows = await _pg_posted_docs(model_class, mod["pg_sid_field"], since, until)
     pg_counter: Counter = Counter(sid for sid, _ in pg_rows)
     pg_item_counts: dict[str, int] = {}
@@ -308,44 +309,51 @@ async def _check_module(mod: dict, oracle: dict, since: datetime, until: datetim
 
     logger.info("%s PG: %d posted docs, %d unique SIDs.", tag, len(pg_rows), len(pg_counter))
 
-    # ── 2. Oracle SIDs ────────────────────────────────────────────────────────
-    oracle_sids = await _oracle_fetch_sids(
-        oracle, mod["oracle_sid_table"], mod["oracle_sid_filter"], since, until
-    )
-    oracle_counter: Counter = Counter(oracle_sids)
-    logger.info("%s Oracle: %d SIDs, %d unique.", tag, len(oracle_sids), len(oracle_counter))
-
-    all_sids = set(pg_counter.keys()) | set(oracle_counter.keys())
-    if not all_sids:
-        logger.info("%s No records in either system — skipping.", tag)
+    if not pg_counter:
+        logger.info("%s No posted records in window — skipping.", tag)
         return []
 
-    # ── 3. Batch item counts for SIDs present on BOTH sides ───────────────────
-    both_sids = sorted(set(pg_counter.keys()) & set(oracle_counter.keys()))
+    # ── 2. Check each PG SID against Oracle individually ─────────────────────
+    oracle_sid_counts: dict[str, int] = {}
+    found_in_oracle: list[str] = []
+
+    for sid in pg_counter.keys():
+        count = await _oracle_check_sid_count(
+            oracle, mod["oracle_sid_table"], mod["oracle_sid_filter"], sid
+        )
+        oracle_sid_counts[sid] = count
+        if count >= 1:
+            found_in_oracle.append(sid)
+
+    logger.info(
+        "%s Oracle: %d/%d SIDs found (status=4).",
+        tag, len(found_in_oracle), len(pg_counter),
+    )
+
+    # ── 3. Batch item counts for SIDs found exactly once in Oracle ────────────
     oracle_item_counts = await _oracle_item_counts_batch(
-        oracle, mod["oracle_item_table"], mod["oracle_item_sid_col"], both_sids
+        oracle, mod["oracle_item_table"], mod["oracle_item_sid_col"], found_in_oracle
     )
 
     # ── 4. Build issue list ───────────────────────────────────────────────────
     issues: list[dict] = []
 
-    for sid in sorted(all_sids):
-        pg_cnt     = pg_counter.get(sid, 0)
-        oracle_cnt = oracle_counter.get(sid, 0)
-        pg_items   = pg_item_counts.get(sid, 0)
+    for sid in sorted(pg_counter.keys()):
+        pg_cnt      = pg_counter[sid]
+        oracle_cnt  = oracle_sid_counts.get(sid, 0)
+        pg_items    = pg_item_counts.get(sid, 0)
         oracle_items: int | None = None
         flags: list[str] = []
 
-        if pg_cnt == 0:
-            flags.append("missing_in_app")
-        elif oracle_cnt == 0:
+        if oracle_cnt == 0:
             flags.append("missing_in_retailpro")
-        else:
-            if pg_cnt > 1:
-                flags.append("duplicate_in_app")
-            if oracle_cnt > 1:
-                flags.append("duplicate_in_retailpro")
+        elif oracle_cnt > 1:
+            flags.append("duplicate_in_retailpro")
 
+        if pg_cnt > 1:
+            flags.append("duplicate_in_app")
+
+        if oracle_cnt == 1:
             oracle_items = oracle_item_counts.get(sid)
             if oracle_items is not None and pg_items != oracle_items:
                 flags.append("item_count_mismatch")

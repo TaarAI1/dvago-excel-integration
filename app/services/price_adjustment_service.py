@@ -433,17 +433,8 @@ async def _process_note_batch(
     existing_doc_id=None,
 ) -> dict:
     """Process all rows for a single NOTE as one adjustment document."""
-    # Try common column-name variants that survive the CSV normalisation step
-    # (k.strip().upper().replace(" ", "_"))
     first_row = rows[0]
-    store_code = (
-        str(
-            first_row.get("STORE_CODE")
-            or first_row.get("STORECODE")
-            or first_row.get("STORE_CODE_")
-            or ""
-        ).strip()
-    )
+    store_code = "001"
     store_name = str(first_row.get("STORE_NAME", "")).strip()
 
     # Determine price level from first row
