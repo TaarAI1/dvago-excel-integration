@@ -43,9 +43,11 @@ from app.services.http_utils import http_call_with_retry
 
 logger = logging.getLogger(__name__)
 
-# ── In-memory cancel state ─────────────────────────────────────────────────────
+# ── In-memory cancel / cooldown state ─────────────────────────────────────────
 _active_import_id: Optional[str] = None
 _cancel_requests: set = set()
+_last_import_completed_at: Optional[Any] = None  # datetime set after each import finishes
+_COOLDOWN_SECONDS = 60                            # block new uploads for this long after finish
 
 
 def get_active_import_id() -> Optional[str]:
@@ -892,9 +894,9 @@ async def process_transfer_slip_csv(
     Supports cooperative cancellation via request_cancel_import().
     Returns a summary dict.
     """
-    global _active_import_id, _cancel_requests
+    global _active_import_id, _cancel_requests, _last_import_completed_at
 
-    # Guard: refuse a second concurrent import to eliminate duplicate-posting race conditions.
+    # ── Guard 1: block concurrent import ─────────────────────────────────────
     if _active_import_id is not None:
         return {
             "ok": False,
@@ -908,83 +910,106 @@ async def process_transfer_slip_csv(
             "error_docs": 0, "total_items": 0, "posted_items": 0,
         }
 
-    from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
-    from app.db.settings_store import get_setting
+    # ── Guard 2: 1-minute cooldown between imports ────────────────────────────
+    if _last_import_completed_at is not None:
+        elapsed = (now_pkt() - _last_import_completed_at).total_seconds()
+        if elapsed < _COOLDOWN_SECONDS:
+            remaining = int(_COOLDOWN_SECONDS - elapsed)
+            return {
+                "ok": False,
+                "cancelled": False,
+                "error": (
+                    f"Please wait {remaining} second(s) before uploading another file. "
+                    f"A {_COOLDOWN_SECONDS}-second cooldown is enforced between imports "
+                    "to prevent duplicate postings."
+                ),
+                "total_docs": 0, "posted_docs": 0, "partial_docs": 0,
+                "error_docs": 0, "total_items": 0, "posted_items": 0,
+            }
 
-    batch_started_at = now_pkt()
-    rows = parse_transfer_slip_csv(file_bytes)
-    if not rows:
-        return {
-            "ok": False,
-            "cancelled": False,
-            "error": "No data rows found (all rows missing UPC or NOTE).",
-            "total_docs": 0,
-            "posted_docs": 0,
-            "partial_docs": 0,
-            "error_docs": 0,
-            "total_items": 0,
-            "posted_items": 0,
-        }
-
-    oc = {
-        "host":         (await get_setting("oracle_host"))         or "",
-        "port":         int((await get_setting("oracle_port"))     or "1521"),
-        "service_name": (await get_setting("oracle_service_name")) or "",
-        "username":     (await get_setting("oracle_username"))     or "",
-        "password":     (await get_setting("oracle_password"))     or "",
-    }
-
-    # Create Oracle connection pool (1 per concurrent group + 1 for pre-loads)
-    from app.services.oracle_service import create_oracle_pool, close_oracle_pool
-    try:
-        oc["pool"] = await create_oracle_pool(
-            oc["host"], oc["port"], oc["service_name"],
-            oc["username"], oc["password"],
-            min_size=1, max_size=5,
-        )
-        logger.info("[TransferSlip] Oracle connection pool created.")
-    except Exception as exc:
-        logger.warning("[TransferSlip] Oracle pool creation failed, using per-query connections: %s", exc)
-        oc["pool"] = None
-
-    base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
-    auth_session = await get_auth_session()
-    await sit_session(base_url, auth_session)
-
-    # Group rows by note
-    note_groups:   dict[str, list[dict]] = {}
-    for row in rows:
-        note = row.get("NOTE", "").strip()
-        note_groups.setdefault(note, []).append(row)
-
-    store_sids_cache: dict = {}
-    item_info_cache:  dict = {}
-    all_docs: list[dict]   = []
-
-    # ── Pre-load caches (bulk Oracle queries before any processing) ───────────
-    all_store_codes = list({
-        c
-        for row in rows
-        for c in (row.get("IN_STORE_NAME", "").strip(), row.get("OUT_STORE_NAME", "").strip())
-        if c
-    })
-    all_upcs = list({row.get("UPC", "").strip() for row in rows if row.get("UPC", "").strip()})
-    all_notes = list(note_groups.keys())
-
-    await _batch_load_store_sids(all_store_codes, store_sids_cache, oc)
-    await _batch_load_item_info(all_upcs, item_info_cache, oc)
-    already_processed_notes = await _batch_check_processed_notes(all_notes, oc)
-    logger.info(
-        "[TransferSlip] Pre-loaded %d stores, %d UPCs; %d/%d notes already processed.",
-        len(store_sids_cache), len(item_info_cache),
-        len(already_processed_notes), len(all_notes),
-    )
-
+    # ── Lock immediately — before ANY await ──────────────────────────────────
+    # Setting _active_import_id here (not later after slow Oracle/auth awaits)
+    # ensures a second concurrent request is blocked right away.
     import_id = str(_uuid.uuid4())
     _active_import_id = import_id
+    _cancel_requests.discard(import_id)
+
+    # Pre-initialise so the finally block is always safe even on early failure.
+    auth_session: Optional[str] = None
+    base_url: str = ""
+    oc: dict = {}
+    all_docs: list[dict] = []
     cancelled = False
+    batch_started_at = now_pkt()
+    rows: list[dict] = []
 
     try:
+        from app.services.retailpro_auth import get_auth_session, sit_session, stand_session
+        from app.db.settings_store import get_setting
+
+        rows = parse_transfer_slip_csv(file_bytes)
+        if not rows:
+            return {
+                "ok": False,
+                "cancelled": False,
+                "error": "No data rows found (all rows missing UPC or NOTE).",
+                "total_docs": 0, "posted_docs": 0, "partial_docs": 0,
+                "error_docs": 0, "total_items": 0, "posted_items": 0,
+            }
+
+        oc = {
+            "host":         (await get_setting("oracle_host"))         or "",
+            "port":         int((await get_setting("oracle_port"))     or "1521"),
+            "service_name": (await get_setting("oracle_service_name")) or "",
+            "username":     (await get_setting("oracle_username"))     or "",
+            "password":     (await get_setting("oracle_password"))     or "",
+        }
+
+        # Create Oracle connection pool (1 per concurrent group + 1 for pre-loads)
+        from app.services.oracle_service import create_oracle_pool, close_oracle_pool
+        try:
+            oc["pool"] = await create_oracle_pool(
+                oc["host"], oc["port"], oc["service_name"],
+                oc["username"], oc["password"],
+                min_size=1, max_size=5,
+            )
+            logger.info("[TransferSlip] Oracle connection pool created.")
+        except Exception as exc:
+            logger.warning("[TransferSlip] Oracle pool creation failed, using per-query connections: %s", exc)
+            oc["pool"] = None
+
+        base_url     = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
+        auth_session = await get_auth_session()
+        await sit_session(base_url, auth_session)
+
+        # Group rows by note
+        note_groups: dict[str, list[dict]] = {}
+        for row in rows:
+            note = row.get("NOTE", "").strip()
+            note_groups.setdefault(note, []).append(row)
+
+        store_sids_cache: dict = {}
+        item_info_cache:  dict = {}
+
+        # ── Pre-load caches (bulk Oracle queries before any processing) ───────
+        all_store_codes = list({
+            c
+            for row in rows
+            for c in (row.get("IN_STORE_NAME", "").strip(), row.get("OUT_STORE_NAME", "").strip())
+            if c
+        })
+        all_upcs = list({row.get("UPC", "").strip() for row in rows if row.get("UPC", "").strip()})
+        all_notes = list(note_groups.keys())
+
+        await _batch_load_store_sids(all_store_codes, store_sids_cache, oc)
+        await _batch_load_item_info(all_upcs, item_info_cache, oc)
+        already_processed_notes = await _batch_check_processed_notes(all_notes, oc)
+        logger.info(
+            "[TransferSlip] Pre-loaded %d stores, %d UPCs; %d/%d notes already processed.",
+            len(store_sids_cache), len(item_info_cache),
+            len(already_processed_notes), len(all_notes),
+        )
+
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
             verify=False,
@@ -998,15 +1023,15 @@ async def process_transfer_slip_csv(
                 if note in already_processed_notes:
                     logger.warning("[TransferSlip] Skipping duplicate note: %s", note)
                     dup_doc: dict = {
-                        "source_file":   source_file,
-                        "note":          note,
+                        "source_file":    source_file,
+                        "note":           note,
                         "in_store_name":  note_rows[0].get("IN_STORE_NAME", "").strip(),
                         "out_store_name": note_rows[0].get("OUT_STORE_NAME", "").strip(),
-                        "item_count":    len(note_rows),
-                        "posted_count":  0,
-                        "error_count":   len(note_rows),
-                        "status":        "error",
-                        "error_message": f'"{note}" has already been processed',
+                        "item_count":     len(note_rows),
+                        "posted_count":   0,
+                        "error_count":    len(note_rows),
+                        "status":         "error",
+                        "error_message":  f'"{note}" has already been processed',
                     }
                     await _persist_slip_doc(dup_doc)
                     return dup_doc
@@ -1041,12 +1066,23 @@ async def process_transfer_slip_csv(
                 if idx < len(note_items) - 1 and not _is_cancelled(import_id):
                     logger.info("[TransferSlip] Waiting 30 s before next document (%d/%d)…", idx + 1, len(note_items))
                     await asyncio.sleep(30)
+
     finally:
         _active_import_id = None
         _cancel_requests.discard(import_id)
-        await stand_session(base_url, auth_session)
+        # Record completion time so the cooldown guard can enforce the 1-minute gap.
+        _last_import_completed_at = now_pkt()
+
+        if auth_session and base_url:
+            try:
+                from app.services.retailpro_auth import stand_session
+                await stand_session(base_url, auth_session)
+            except Exception as _se:
+                logger.warning("[TransferSlip] stand_session failed during cleanup: %s", _se)
+
         if oc.get("pool") is not None:
             try:
+                from app.services.oracle_service import close_oracle_pool
                 await close_oracle_pool(oc["pool"])
             except Exception as exc:
                 logger.warning("[TransferSlip] Failed to close Oracle pool: %s", exc)
