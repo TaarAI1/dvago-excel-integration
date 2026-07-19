@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 20
 
+_ORA_IN_LIMIT = 999  # Oracle hard-limits IN (...) to 1000 expressions
+
+
+def _chunks(lst: list, size: int):
+    for i in range(0, len(lst), size):
+        yield lst[i : i + size]
+
+
 # ── In-memory cancel state ────────────────────────────────────────────────────
 _active_import_id: Optional[str] = None
 _cancel_requests: set = set()
@@ -124,6 +132,78 @@ async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
     return df.row(0)
 
 
+async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
+    """Bulk-load item SID/active for all given (already-normalized) UPCs.
+
+    Uses the same 3-step lookup as _get_item_info but in bulk form:
+      1. Exact upc IN (...)
+      2. Leading-zero tolerant LTRIM match for numeric keys still missing
+      3. ALU fallback for any still missing
+
+    Reduces O(3 * N) individual connections to at most 3 queries total.
+    """
+    from app.services.item_master_service import _normalize_upc
+    from app.services.oracle_service import run_query, run_query_with_pool
+
+    async def _run_sql(sql: str):
+        pool = oc.get("pool")
+        if pool is not None:
+            return await run_query_with_pool(pool, sql)
+        return await run_query(
+            oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
+        )
+
+    def _populate(df, key_col: str) -> None:
+        if df is None or df.is_empty():
+            return
+        df.columns = [c.upper() for c in df.columns]
+        for row in df.iter_rows(named=True):
+            k = str(row.get(key_col) or "").strip()
+            if k and k not in cache:
+                cache[k] = (
+                    str(row["SID"]) if row.get("SID") is not None else None,
+                    int(row["ACTIVE"]) if row.get("ACTIVE") is not None else None,
+                )
+
+    # Normalize and deduplicate
+    norm_upcs = list({_normalize_upc(u) for u in upcs if _normalize_upc(u)})
+    unknown = [u for u in norm_upcs if u not in cache]
+    if not unknown:
+        return
+
+    # Step 1 — exact UPC match
+    for chunk in _chunks(unknown, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"'{u.replace(chr(39), chr(39)*2)}'" for u in chunk)
+        df = await _run_sql(
+            f"SELECT upc, sid, active FROM rps.invn_Sbs_item WHERE upc IN ({placeholders})"
+        )
+        _populate(df, "UPC")
+
+    # Step 2 — leading-zero tolerant for numeric keys still missing
+    numeric_missing = [u for u in unknown if u not in cache and u.isdigit()]
+    for chunk in _chunks(numeric_missing, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"LTRIM(TRIM('{u.replace(chr(39), chr(39)*2)}'), '0')" for u in chunk)
+        df = await _run_sql(
+            f"SELECT upc, sid, active FROM rps.invn_Sbs_item "
+            f"WHERE LTRIM(TRIM(upc), '0') IN ({placeholders})"
+        )
+        _populate(df, "UPC")
+
+    # Step 3 — ALU fallback for anything still missing
+    still_missing = [u for u in unknown if u not in cache]
+    for chunk in _chunks(still_missing, _ORA_IN_LIMIT):
+        placeholders = ", ".join(f"'{u.replace(chr(39), chr(39)*2)}'" for u in chunk)
+        df = await _run_sql(
+            f"SELECT alu, sid, active FROM rps.invn_Sbs_item WHERE alu IN ({placeholders})"
+        )
+        _populate(df, "ALU")
+
+    # Mark any remaining unknowns as not found
+    for u in unknown:
+        if u not in cache:
+            cache[u] = (None, None)
+
+
 async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
     """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found.
 
@@ -148,13 +228,13 @@ async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str]
                 int(row[1]) if row[1] is not None else None,
             )
 
-        # 1. Exact UPC match
+        # 1. Exact UPC match — let exceptions propagate (no fallback on error)
         row = await _oracle_row(
             f"SELECT sid, active FROM rps.invn_Sbs_item WHERE upc = '{safe_key}'", oc
         )
         result = _extract(row)
 
-        # 2. Leading-zero tolerant (only when the key is purely numeric)
+        # 2. Leading-zero tolerant (only when the key is purely numeric and step 1 returned no row)
         if result is None and key.isdigit():
             row = await _oracle_row(
                 f"SELECT sid, active FROM rps.invn_Sbs_item "
@@ -163,7 +243,7 @@ async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str]
             )
             result = _extract(row)
 
-        # 3. ALU fallback
+        # 3. ALU fallback (only when steps 1 and 2 returned no row)
         if result is None:
             row = await _oracle_row(
                 f"SELECT sid, active FROM rps.invn_Sbs_item WHERE alu = '{safe_key}'", oc
@@ -830,6 +910,19 @@ async def process_qty_adjustment_csv(
         "password":     (await get_setting("oracle_password"))     or "",
     }
 
+    # Create Oracle connection pool — reduces per-item connection overhead
+    from app.services.oracle_service import create_oracle_pool, close_oracle_pool
+    try:
+        oc["pool"] = await create_oracle_pool(
+            oc["host"], oc["port"], oc["service_name"],
+            oc["username"], oc["password"],
+            min_size=1, max_size=5,
+        )
+        logger.info("[QtyAdj] Oracle connection pool created.")
+    except Exception as exc:
+        logger.warning("[QtyAdj] Oracle pool creation failed, using per-query connections: %s", exc)
+        oc["pool"] = None
+
     base_url = ((await get_setting("retailpro_base_url")) or "").rstrip("/")
     auth_session: Optional[str] = None
 
@@ -853,6 +946,18 @@ async def process_qty_adjustment_csv(
         adj_reason_sid = await _get_adj_reason_sid(oc)
         if not adj_reason_sid:
             logger.warning("[QtyAdj] Could not resolve adjreasonsid from Oracle (PREF_REASON name=MANUALLY)")
+
+        # Bulk pre-load all item SIDs across the entire CSV in 3 queries max
+        from app.services.item_master_service import _normalize_upc as _nu
+        all_upcs = list({
+            _nu(row.get("SCANUPC", ""))
+            for note_rows in note_groups.values()
+            for row in note_rows
+            if _nu(row.get("SCANUPC", ""))
+        })
+        if all_upcs:
+            await _batch_load_item_info(all_upcs, item_info_cache, oc)
+            logger.info("[QtyAdj] Pre-loaded %d UPCs into item cache.", len(all_upcs))
 
         _timeout = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
@@ -883,6 +988,12 @@ async def process_qty_adjustment_csv(
         if _active_import_id == import_id:
             _active_import_id = None
         _cancel_requests.discard(import_id)
+        if oc.get("pool") is not None:
+            try:
+                await close_oracle_pool(oc["pool"])
+                logger.info("[QtyAdj] Oracle connection pool closed.")
+            except Exception as _pe:
+                logger.warning("[QtyAdj] Oracle pool close failed: %s", _pe)
         if auth_session:
             try:
                 await stand_session(base_url, auth_session)

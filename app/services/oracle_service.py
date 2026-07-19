@@ -48,7 +48,7 @@ def _test_connection_sync(host: str, port: int, service_name: str, username: str
     _ensure_thick_mode()
     try:
         dsn = f"{host}:{port}/{service_name}"
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
+        conn = oracledb.connect(user=username, password=password, dsn=dsn, tcp_connect_timeout=10)
         conn.close()
         return {"ok": True, "error": None}
     except Exception as exc:
@@ -72,9 +72,10 @@ def _run_query_sync(
 ) -> pl.DataFrame:
     _ensure_thick_mode()
     dsn = f"{host}:{port}/{service_name}"
-    conn = oracledb.connect(user=username, password=password, dsn=dsn)
+    conn = oracledb.connect(user=username, password=password, dsn=dsn, tcp_connect_timeout=10)
     try:
         cursor = conn.cursor()
+        cursor.callTimeout = 15000  # 15 s max per query (milliseconds)
         cursor.execute(sql)
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
