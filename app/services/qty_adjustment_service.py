@@ -125,19 +125,53 @@ async def _oracle_row(sql: str, oc: dict) -> Optional[tuple]:
 
 
 async def _get_item_info(upc: str, cache: dict, oc: dict) -> tuple[Optional[str], Optional[int]]:
-    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found."""
-    key = str(upc).strip()
+    """Return (sid, active) for a UPC.  active=1 → active, 0 → inactive, None → not found.
+
+    Lookup order:
+      1. Exact upc match
+      2. Leading-zero tolerant match (numeric keys only)
+      3. ALU fallback (for CSVs that carry ALU/item-code instead of UPC)
+    """
+    from app.services.item_master_service import _normalize_upc
+    key = _normalize_upc(upc)
+    if not key:
+        return (None, None)
+
     if key not in cache:
-        row = await _oracle_row(
-            f"SELECT sid, active FROM rps.invn_Sbs_item WHERE upc = '{key}'", oc
-        )
-        if row:
-            cache[key] = (
+        safe_key = key.replace("'", "''")
+
+        def _extract(row: Optional[tuple]) -> Optional[tuple]:
+            if not row:
+                return None
+            return (
                 str(row[0]) if row[0] is not None else None,
                 int(row[1]) if row[1] is not None else None,
             )
-        else:
-            cache[key] = (None, None)
+
+        # 1. Exact UPC match
+        row = await _oracle_row(
+            f"SELECT sid, active FROM rps.invn_Sbs_item WHERE upc = '{safe_key}'", oc
+        )
+        result = _extract(row)
+
+        # 2. Leading-zero tolerant (only when the key is purely numeric)
+        if result is None and key.isdigit():
+            row = await _oracle_row(
+                f"SELECT sid, active FROM rps.invn_Sbs_item "
+                f"WHERE LTRIM(TRIM(upc), '0') = LTRIM(TRIM('{safe_key}'), '0')",
+                oc,
+            )
+            result = _extract(row)
+
+        # 3. ALU fallback
+        if result is None:
+            row = await _oracle_row(
+                f"SELECT sid, active FROM rps.invn_Sbs_item WHERE alu = '{safe_key}'", oc
+            )
+            result = _extract(row)
+
+        cache[key] = result if result is not None else (None, None)
+
     return cache[key]
 
 
@@ -483,20 +517,25 @@ async def _process_note_batch(
         except (ValueError, TypeError):
             csv_delta = 0
 
+        item_err: Optional[str] = None
         try:
+            from app.services.item_master_service import _normalize_upc as _nu
+            upc = _nu(upc) or upc
             item_sid, item_active = await _get_item_info(upc, item_info_cache, oc)
         except Exception as _exc:
             item_sid, item_active = None, None
+            item_err = f"Oracle lookup error: {_exc}"
             logger.warning("[QtyAdj] Oracle item lookup failed upc=%s: %s", upc, _exc)
 
-        if item_sid is None:
-            item_err = "Item not found in Oracle"
-            preflight_has_error = True
-        elif item_active == 0:
-            item_err = "Item is inactive"
-            preflight_has_error = True
+        if item_err is None:
+            if item_sid is None:
+                item_err = "Item not found in Oracle"
+                preflight_has_error = True
+            elif item_active == 0:
+                item_err = "Item is inactive"
+                preflight_has_error = True
         else:
-            item_err = None
+            preflight_has_error = True
 
         preflight_items.append({
             "upc":         upc,
@@ -568,6 +607,8 @@ async def _process_note_batch(
             except (ValueError, TypeError):
                 csv_delta = 0
 
+            from app.services.item_master_service import _normalize_upc as _nu
+            upc = _nu(upc) or upc
             item_sid, _ = await _get_item_info(upc, item_info_cache, oc)
 
             current_qty = 0
