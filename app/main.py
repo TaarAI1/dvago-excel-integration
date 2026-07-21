@@ -1,8 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.db.postgres import connect_db, close_db
@@ -147,7 +150,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # Bearer token in Authorization header — cookies not used
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -178,3 +181,27 @@ app.include_router(reports.router)
 @app.get("/")
 async def root():
     return {"message": "RetailPro Integration API v3", "docs": "/docs"}
+
+
+# ── Serve built frontend (works for both dev dist/ and release web/) ──────────
+_DIST_CANDIDATES = [
+    Path(__file__).parent.parent / "frontend" / "dist",   # development layout
+    Path(__file__).parent.parent / "web",                  # release layout (api/ + web/)
+    Path(__file__).parent.parent.parent / "web",           # nested release layout
+]
+_STATIC_DIR: Path | None = next((p for p in _DIST_CANDIDATES if (p / "index.html").exists()), None)
+
+if _STATIC_DIR:
+    # Serve static assets (JS/CSS/images) under /assets
+    _assets = _STATIC_DIR / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+
+    # Catch-all: serve index.html for any non-API path (React Router support)
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Never intercept API routes — let them bubble up to a real 404
+        if full_path.startswith("api/"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse(str(_STATIC_DIR / "index.html"))

@@ -3,7 +3,7 @@ import { Box, TextField, Button, Typography, Alert, CircularProgress, InputAdorn
 import StorageIcon from '@mui/icons-material/Storage'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
-import axios from 'axios'
+import apiClient from '../../api/client'
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState('')
@@ -20,7 +20,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       const form = new URLSearchParams()
       form.append('username', username)
       form.append('password', password)
-      const res = await axios.post('/api/auth/login', form, {
+      const res = await apiClient.post('/api/auth/login', form, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       })
       localStorage.setItem('access_token', res.data.access_token)
