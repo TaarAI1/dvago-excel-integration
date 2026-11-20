@@ -486,6 +486,21 @@ async def _persist_price_adj_doc(doc_data: dict) -> None:
             session.add(doc)
 
 
+# ── File-level duplicate guard ───────────────────────────────────────────────
+
+async def _is_source_file_already_processed(base_name: str) -> bool:
+    """Return True if any price adjustment doc already exists for this filename."""
+    from app.db.postgres import get_session
+    from app.models.price_adjustment_doc import PriceAdjustmentDoc
+    from sqlalchemy import select, func
+    async with get_session() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(PriceAdjustmentDoc)
+            .where(PriceAdjustmentDoc.source_file.like(f"{base_name}::%"))
+        )
+    return (count or 0) > 0
+
+
 # ── Already-processed guard (Oracle) ─────────────────────────────────────────
 
 
@@ -801,6 +816,25 @@ async def process_price_adjustment_csv(
     _cancel_requests.discard(import_id)
 
     batch_started_at = now_pkt()
+
+    # File-level duplicate guard — same filename cannot be re-imported
+    base_name = source_file.split("::")[0]
+    try:
+        if await _is_source_file_already_processed(base_name):
+            _active_import_id = None
+            logger.warning("[PriceAdj] File '%s' already processed — rejecting re-import.", base_name)
+            return {
+                "ok": False,
+                "error": (
+                    f"File '{base_name}' has already been processed. "
+                    "Same-named files cannot be re-imported. "
+                    "Rename the file if this is a new batch."
+                ),
+                "docs": [],
+            }
+    except Exception as _dup_exc:
+        logger.warning("[PriceAdj] File duplicate check failed (proceeding): %s", _dup_exc)
+
     rows = parse_price_adjustment_csv(file_bytes)
     if not rows:
         _active_import_id = None
