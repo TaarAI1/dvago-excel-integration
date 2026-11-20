@@ -1,17 +1,12 @@
 """
 GRN (Goods Received Note) import service.
 
-Processing pipeline (per note-group, up to 900 items per voucher):
-  1.  Parse CSV — find header row, extract Store Code, upc, Vendor Code, note, totalqty
-  2.  Skip rows missing upc or note
-  3.  Group rows by note field
-  4.  Duplicate check (both must return nothing to proceed):
-        Q1: SELECT note FROM rps.voucher WHERE status = 4 AND note = '{note}'
-        Q2: SELECT vc.comments FROM rps.vou_comment vc
-            JOIN rps.voucher v ON vc.vou_sid = v.sid
-            WHERE vc.comments = '{note}' AND v.status = 4
-        → skip if either query returns a result
-  5.  For each note-group (chunked to 900 items per voucher):
+Processing pipeline (per store-group, up to 900 items per voucher):
+  1.  Parse CSV — find header row, extract Store Code, upc, Vendor Code, totalqty
+  2.  Skip rows missing upc
+  3.  Group rows by STORE_CODE — each unique store code = one GRN document
+  4.  File-level duplicate guard: same-named file cannot be re-imported
+  5.  For each store-group (chunked to 900 items per voucher):
       a. Oracle lookup for store:
             SELECT sid, sbs_sid FROM rps.store WHERE store_code = '{store_code}'
             → storesid (sid), sbssid (sbs_sid)
@@ -95,13 +90,13 @@ def parse_grn_csv(file_bytes: bytes) -> list[dict]:
 
     for i, line in enumerate(lines):
         cols_lower = [c.strip().lower() for c in line.split(",")]
-        if "note" in cols_lower and "upc" in cols_lower and "totalqty" in cols_lower:
+        if "upc" in cols_lower and "totalqty" in cols_lower:
             header_idx = i
             break
 
     if header_idx is None:
         raise ValueError(
-            "Could not find header row containing 'note', 'upc', and 'totalqty' columns."
+            "Could not find header row containing 'upc' and 'totalqty' columns."
         )
 
     csv_text = "\n".join(lines[header_idx:])
@@ -114,9 +109,8 @@ def parse_grn_csv(file_bytes: bytes) -> list[dict]:
             for k, v in row.items()
             if k
         }
-        upc  = normalised.get("UPC", "").strip()
-        note = normalised.get("NOTE", "").strip()
-        if not upc or not note:
+        upc = normalised.get("UPC", "").strip()
+        if not upc:
             continue
         rows_out.append(normalised)
 
@@ -288,70 +282,6 @@ async def _batch_load_item_info(upcs: list[str], cache: dict, oc: dict) -> None:
             cache[u] = (None, None)
 
 
-async def _batch_check_processed_notes(notes: list[str], oc: dict) -> set[str]:
-    """Return the set of notes already finalised in RetailPro (chunked to avoid ORA-01795).
-
-    Runs two independent queries and unions the results — a note is considered
-    already processed if it appears in EITHER:
-
-    Query 1 (voucher.note):
-        SELECT note FROM rps.voucher WHERE status = 4 AND note IN (...)
-
-    Query 2 (vou_comment.comments joined to voucher):
-        SELECT vc.comments FROM rps.vou_comment vc
-        JOIN rps.voucher v ON vc.vou_sid = v.sid
-        WHERE vc.comments IN (...) AND v.status = 4
-    """
-    if not notes:
-        return set()
-    pool = oc.get("pool")
-    result: set[str] = set()
-
-    async def _run(sql: str) -> None:
-        if pool is not None:
-            from app.services.oracle_service import run_query_with_pool
-            df = await run_query_with_pool(pool, sql)
-        else:
-            from app.services.oracle_service import run_query
-            df = await run_query(
-                oc["host"], oc["port"], oc["service_name"], oc["username"], oc["password"], sql
-            )
-        return df
-
-    for chunk in _chunks(notes, _ORA_IN_LIMIT):
-        placeholders = ", ".join(f"'{n}'" for n in chunk)
-
-        # Query 1 — voucher.note
-        sql1 = (
-            f"SELECT note FROM rps.voucher "
-            f"WHERE status = 4 AND note IN ({placeholders})"
-        )
-        df1 = await _run(sql1)
-        if df1 is not None and not df1.is_empty():
-            df1.columns = [c.upper() for c in df1.columns]
-            result.update(
-                str(row.get("NOTE") or "").strip()
-                for row in df1.iter_rows(named=True)
-                if row.get("NOTE")
-            )
-
-        # Query 2 — vou_comment joined to voucher
-        sql2 = (
-            f"SELECT vc.comments FROM rps.vou_comment vc "
-            f"JOIN rps.voucher v ON vc.vou_sid = v.sid "
-            f"WHERE vc.comments IN ({placeholders}) AND v.status = 4"
-        )
-        df2 = await _run(sql2)
-        if df2 is not None and not df2.is_empty():
-            df2.columns = [c.upper() for c in df2.columns]
-            result.update(
-                str(row.get("COMMENTS") or "").strip()
-                for row in df2.iter_rows(named=True)
-                if row.get("COMMENTS")
-            )
-
-    return result
-
 
 # ── RetailPro API calls ────────────────────────────────────────────────────────
 
@@ -369,11 +299,9 @@ async def _create_grn_doc(
     auth_session: str,
     storesid: str,
     sbssid: str,
-    note: str = "",
 ) -> tuple[Optional[str], dict, dict]:
     """
     POST /api/backoffice/receiving
-    The note from the CSV is included directly in the create payload (no createddatetime).
     Returns (vousid, payload_sent, response_json).
     """
     payload = {
@@ -386,7 +314,6 @@ async def _create_grn_doc(
             "voutype": 0,
             "vouclass": 0,
             "verified": True,
-            "note": note,
         }]
     }
     resp = await http_call_with_retry(
@@ -498,38 +425,6 @@ async def _post_grn_items(
     return all_payloads, all_responses
 
 
-async def _post_grn_comment(
-    http: httpx.AsyncClient,
-    base_url: str,
-    auth_session: str,
-    vousid: str,
-    note: str,
-) -> tuple[dict, dict]:
-    """
-    POST /api/backoffice/receiving/{vousid}/recvcomment?comments={note}
-    Returns (payload_sent, response_json).
-    """
-    payload = {
-        "data": [{
-            "originapplication": "RProPrismWeb",
-            "comments": note,
-            "vousid": vousid,
-        }]
-    }
-    resp = await http_call_with_retry(
-        http.post,
-        f"{base_url}/api/backoffice/receiving/{vousid}/recvcomment",
-        params={"comments": note},
-        json=payload,
-        headers=_rp_headers(auth_session),
-        idempotent=False,
-    )
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {"raw": resp.text}
-    return payload, resp_json
-
 
 async def _finalize_grn(
     http: httpx.AsyncClient,
@@ -631,10 +526,10 @@ async def _persist_grn_doc(doc_data: dict) -> None:
             session.add(doc)
 
 
-# ── Note-group processor ───────────────────────────────────────────────────────
+# ── Store-group processor ──────────────────────────────────────────────────────
 
-async def _process_note_group(
-    note: str,
+async def _process_store_group(
+    store_code: str,
     rows: list[dict],
     source_file: str,
     base_url: str,
@@ -647,23 +542,20 @@ async def _process_note_group(
     existing_doc_id=None,
 ) -> list[dict]:
     """
-    Process all rows for a single note group.
+    Process all rows for a single STORE_CODE as one GRN document.
     Chunks items to GRN_ITEM_LIMIT (900) per voucher.
     Returns a list of doc result dicts (one per voucher/chunk).
     """
-    # Pull common fields from the first non-empty row
-    store_code  = rows[0].get("STORE_CODE", "").strip()
     store_name  = rows[0].get("STORE_NAME", "").strip()
     vendor_code = rows[0].get("VENDOR_CODE", "").strip()
 
     all_docs: list[dict] = []
 
-    # Resolve store SIDs once for the note group
+    # Resolve store SIDs
     storesid, sbssid = await _get_store_sids(store_code, store_cache, oc)
     if not storesid:
         err_doc = {
             "source_file": source_file,
-            "note": note,
             "store_code": store_code,
             "store_name": store_name,
             "storesid": None,
@@ -682,12 +574,11 @@ async def _process_note_group(
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
-    # Resolve vendor SID once for the note group
+    # Resolve vendor SID
     vendsid = await _get_vendor_sid(vendor_code, vendor_cache, oc)
     if not vendsid:
         err_doc = {
             "source_file": source_file,
-            "note": note,
             "store_code": store_code,
             "store_name": store_name,
             "storesid": storesid,
@@ -698,7 +589,7 @@ async def _process_note_group(
             "posted_count": 0,
             "error_count": len(rows),
             "status": "error",
-            "error_message": f"Vendor SID not found in Oracle for vend_id='{vendor_code}'",
+            "error_message": f"Vendor SID not found in Oracle for vend_code='{vendor_code}'",
             "items_data": [],
             "raw_rows": rows,
             "_existing_id": existing_doc_id,
@@ -744,7 +635,6 @@ async def _process_note_group(
     if preflight_has_error:
         err_doc = {
             "source_file":   source_file,
-            "note":          note,
             "store_code":    store_code,
             "store_name":    store_name,
             "storesid":      storesid,
@@ -766,46 +656,13 @@ async def _process_note_group(
         await _persist_grn_doc(err_doc)
         return [err_doc]
 
-    # Fresh duplicate check immediately before any API call — last-resort guard against
-    # race conditions where two imports both passed the bulk pre-load snapshot.
-    fresh_check = await _batch_check_processed_notes([note], oc)
-    if note in fresh_check:
-        err_doc = {
-            "source_file":   source_file,
-            "note":          note,
-            "store_code":    store_code,
-            "store_name":    store_name,
-            "storesid":      storesid,
-            "sbssid":        sbssid,
-            "vendsid":       vendsid,
-            "vousid":        None,
-            "item_count":    len(rows),
-            "posted_count":  0,
-            "error_count":   len(rows),
-            "status":        "error",
-            "error_message": (
-                f"Note '{note}' was found in RetailPro at the point of posting — "
-                "skipping to prevent duplicate GRN."
-            ),
-            "items_data":    [],
-            "raw_rows":      rows,
-            "_existing_id":  existing_doc_id,
-        }
-        logger.warning(
-            "[GRN] Fresh duplicate check blocked posting for note='%s'.", note
-        )
-        await _persist_grn_doc(err_doc)
-        return [err_doc]
-
     # All items valid — chunk into batches of GRN_ITEM_LIMIT
     chunks = [items_detail[i:i + GRN_ITEM_LIMIT] for i in range(0, len(items_detail), GRN_ITEM_LIMIT)]
-    # Map each chunk back to corresponding source rows for retry support
     chunk_rows = [rows[i:i + GRN_ITEM_LIMIT] for i in range(0, len(rows), GRN_ITEM_LIMIT)]
 
     for chunk_idx, chunk in enumerate(chunks):
         doc_data: dict = {
             "source_file": source_file,
-            "note": note,
             "store_code": store_code,
             "store_name": store_name,
             "storesid": storesid,
@@ -823,9 +680,9 @@ async def _process_note_group(
         }
 
         try:
-            # Step 1: Create GRN voucher (note is embedded directly in the payload)
+            # Step 1: Create GRN voucher
             vousid, create_payload, create_resp = await _create_grn_doc(
-                http, base_url, auth_session, storesid, sbssid or "", note=note
+                http, base_url, auth_session, storesid, sbssid or ""
             )
             doc_data["api_create_payload"]  = {"_url": f"POST {base_url}/api/backoffice/receiving", **create_payload}
             doc_data["api_create_response"] = create_resp
@@ -875,13 +732,13 @@ async def _process_note_group(
                     item["ok"] = False
                     item["error"] = str(resp.get("errors") or resp.get("error"))
                     logger.warning(
-                        "[GRN] recvitem error note='%s' upc=%s: %s",
-                        note, item.get("upc"), item["error"],
+                        "[GRN] recvitem error store=%s upc=%s: %s",
+                        store_code, item.get("upc"), item["error"],
                     )
                 else:
                     item["ok"] = True
 
-            # Step 5: Get updated rowversion (comment step removed — note is in the create payload)
+            # Step 5: Get updated rowversion
             rowversion2, get_resp2 = await _get_grn_rowversion(http, base_url, auth_session, vousid)
             doc_data["api_get_rowversion2_response"] = {"_url": f"GET {base_url}/api/backoffice/receiving?filter=(sid,eq,{vousid})", **get_resp2}
 
@@ -909,7 +766,7 @@ async def _process_note_group(
             })
 
         except Exception as exc:
-            logger.exception("Error processing GRN note='%s' chunk=%d", note, chunk_idx)
+            logger.exception("Error processing GRN store=%s chunk=%d", store_code, chunk_idx)
             doc_data["error_message"]   = str(exc)
             doc_data["error_traceback"] = traceback.format_exc()
             doc_data["error_count"]     = len(chunk)
@@ -917,11 +774,11 @@ async def _process_note_group(
         try:
             await _persist_grn_doc(doc_data)
         except Exception as db_exc:
-            logger.error("[GRN] DB persist failed for note=%s chunk=%d: %s", note, chunk_idx, db_exc)
+            logger.error("[GRN] DB persist failed store=%s chunk=%d: %s", store_code, chunk_idx, db_exc)
 
         logger.info(
-            "[GRN] note=%s vousid=%s items=%d posted=%d errors=%d",
-            note, doc_data.get("vousid"),
+            "[GRN] store=%s vousid=%s items=%d posted=%d errors=%d",
+            store_code, doc_data.get("vousid"),
             doc_data["item_count"], doc_data["posted_count"], doc_data["error_count"],
         )
         all_docs.append(doc_data)
@@ -929,22 +786,27 @@ async def _process_note_group(
     return all_docs
 
 
-# ── Duplicate-note guard ───────────────────────────────────────────────────────
-
-async def _note_already_processed_in_retailpro(note: str, oc: dict) -> bool:
-    """Single-note duplicate check (kept for fallback; prefer _batch_check_processed_notes)."""
-    processed = await _batch_check_processed_notes([note], oc)
-    return note in processed
-
-
 # ── Main entry point ───────────────────────────────────────────────────────────
+
+async def _is_grn_source_file_already_processed(base_name: str) -> bool:
+    """Return True if any GRN doc already exists for this filename."""
+    from app.db.postgres import get_session
+    from app.models.grn_doc import GRNDoc
+    from sqlalchemy import select, func
+    async with get_session() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(GRNDoc)
+            .where(GRNDoc.source_file.like(f"{base_name}::%"))
+        )
+    return (count or 0) > 0
+
 
 async def process_grn_csv(
     file_bytes: bytes,
     source_file: str = "grn.csv",
 ) -> dict:
     """
-    Full GRN pipeline: parse CSV → group by note → process each note group.
+    Full GRN pipeline: parse CSV → group by STORE_CODE → process each store group.
     Supports cooperative cancellation via request_cancel_import().
     Returns a summary dict.
     """
@@ -972,12 +834,37 @@ async def process_grn_csv(
     from app.db.settings_store import get_setting
 
     batch_started_at = now_pkt()
+
+    # File-level duplicate guard — same filename cannot be re-imported
+    base_name = source_file.split("::")[0]
+    try:
+        if await _is_grn_source_file_already_processed(base_name):
+            _active_import_id = None
+            logger.warning("[GRN] File '%s' already processed — rejecting re-import.", base_name)
+            return {
+                "ok": False,
+                "cancelled": False,
+                "error": (
+                    f"File '{base_name}' has already been processed. "
+                    "Same-named files cannot be re-imported. "
+                    "Rename the file if this is a new batch."
+                ),
+                "total_docs": 0,
+                "posted_docs": 0,
+                "partial_docs": 0,
+                "error_docs": 0,
+                "total_items": 0,
+                "posted_items": 0,
+            }
+    except Exception as _dup_exc:
+        logger.warning("[GRN] File duplicate check failed (proceeding): %s", _dup_exc)
+
     rows = parse_grn_csv(file_bytes)
     if not rows:
         return {
             "ok": False,
             "cancelled": False,
-            "error": "No data rows found (all rows missing UPC or NOTE).",
+            "error": "No data rows found (all rows missing UPC).",
             "total_docs": 0,
             "posted_docs": 0,
             "partial_docs": 0,
@@ -1011,11 +898,11 @@ async def process_grn_csv(
     auth_session = await get_auth_session()
     await sit_session(base_url, auth_session)
 
-    # Group rows by note
-    note_groups: dict[str, list[dict]] = {}
+    # Group rows by STORE_CODE — each unique store code = one GRN document
+    store_groups: dict[str, list[dict]] = {}
     for row in rows:
-        note = row.get("NOTE", "").strip()
-        note_groups.setdefault(note, []).append(row)
+        sc = str(row.get("STORE_CODE", "") or "").strip().upper()
+        store_groups.setdefault(sc, []).append(row)
 
     store_cache:     dict = {}
     vendor_cache:    dict = {}
@@ -1026,16 +913,13 @@ async def process_grn_csv(
     all_store_codes  = list({row.get("STORE_CODE", "").strip() for row in rows if row.get("STORE_CODE", "").strip()})
     all_vendor_codes = list({row.get("VENDOR_CODE", "").strip() for row in rows if row.get("VENDOR_CODE", "").strip()})
     all_upcs         = list({row.get("UPC", "").strip()         for row in rows if row.get("UPC", "").strip()})
-    all_notes        = list(note_groups.keys())
 
     await _batch_load_store_sids(all_store_codes, store_cache, oc)
     await _batch_load_vendor_sids(all_vendor_codes, vendor_cache, oc)
     await _batch_load_item_info(all_upcs, item_info_cache, oc)
-    already_processed_notes = await _batch_check_processed_notes(all_notes, oc)
     logger.info(
-        "[GRN] Pre-loaded %d stores, %d vendors, %d UPCs; %d/%d notes already processed.",
+        "[GRN] Pre-loaded %d stores, %d vendors, %d UPCs.",
         len(store_cache), len(vendor_cache), len(item_info_cache),
-        len(already_processed_notes), len(all_notes),
     )
 
     import_id = str(_uuid.uuid4())
@@ -1050,66 +934,41 @@ async def process_grn_csv(
         ) as http:
             sem = asyncio.Semaphore(3)
 
-            async def _process_one(note: str, note_rows: list[dict]) -> Optional[list[dict]]:
+            async def _process_one(store_code: str, store_rows: list[dict]) -> Optional[list[dict]]:
                 if _is_cancelled(import_id):
                     return None
 
-                if note in already_processed_notes:
-                    store_code = note_rows[0].get("STORE_CODE", "").strip()
-                    store_name = note_rows[0].get("STORE_NAME", "").strip()
-                    dup_doc = {
-                        "source_file": source_file,
-                        "note": note,
-                        "store_code": store_code,
-                        "store_name": store_name,
-                        "storesid": None, "sbssid": None, "vendsid": None, "vousid": None,
-                        "item_count": len(note_rows),
-                        "posted_count": 0,
-                        "error_count": len(note_rows),
-                        "status": "error",
-                        "error_message": (
-                            f"Note '{note}' has already been processed in RetailPro. "
-                            "Skipping to avoid duplicate GRN."
-                        ),
-                        "items_data": [],
-                    }
-                    logger.warning("[GRN] Skipping note='%s' — already finalised in RetailPro.", note)
-                    await _persist_grn_doc(dup_doc)
-                    return [dup_doc]
-
                 # Validate: every row must share the same Vendor Code
-                vendor_codes_set = {str(r.get("VENDOR_CODE", "")).strip() for r in note_rows}
+                vendor_codes_set = {str(r.get("VENDOR_CODE", "")).strip() for r in store_rows}
                 vendor_codes_set.discard("")
                 if len(vendor_codes_set) > 1:
-                    store_code = note_rows[0].get("STORE_CODE", "").strip()
-                    store_name = note_rows[0].get("STORE_NAME", "").strip()
+                    store_name = store_rows[0].get("STORE_NAME", "").strip()
                     err_doc = {
                         "source_file": source_file,
-                        "note": note,
                         "store_code": store_code,
                         "store_name": store_name,
                         "storesid": None, "sbssid": None, "vendsid": None, "vousid": None,
-                        "item_count": len(note_rows),
+                        "item_count": len(store_rows),
                         "posted_count": 0,
-                        "error_count": len(note_rows),
+                        "error_count": len(store_rows),
                         "status": "error",
                         "error_message": (
-                            f"Multiple vendors in GRN note='{note}': "
+                            f"Multiple vendors in GRN store_code='{store_code}': "
                             f"{', '.join(sorted(vendor_codes_set))}. "
-                            "All rows in a note group must share the same Vendor Code."
+                            "All rows for a store must share the same Vendor Code."
                         ),
                         "items_data": [],
                     }
-                    logger.warning("[GRN] Skipping note='%s' — multiple vendor codes: %s", note, vendor_codes_set)
+                    logger.warning("[GRN] Skipping store='%s' — multiple vendor codes: %s", store_code, vendor_codes_set)
                     await _persist_grn_doc(err_doc)
                     return [err_doc]
 
                 async with sem:
                     if _is_cancelled(import_id):
                         return None
-                    return await _process_note_group(
-                        note=note,
-                        rows=note_rows,
+                    return await _process_store_group(
+                        store_code=store_code,
+                        rows=store_rows,
                         source_file=source_file,
                         base_url=base_url,
                         auth_session=auth_session,
@@ -1120,10 +979,10 @@ async def process_grn_csv(
                         item_info_cache=item_info_cache,
                     )
 
-            note_items = list(note_groups.items())
-            for idx, (note, note_rows) in enumerate(note_items):
+            store_items = list(store_groups.items())
+            for idx, (store_code, store_rows) in enumerate(store_items):
                 try:
-                    r = await _process_one(note, note_rows)
+                    r = await _process_one(store_code, store_rows)
                 except Exception as exc:
                     r = exc
                 if isinstance(r, Exception):
@@ -1133,8 +992,8 @@ async def process_grn_csv(
                 else:
                     all_docs.extend(r)
                 # Wait 30 s between documents to avoid overloading RetailPro
-                if idx < len(note_items) - 1 and not _is_cancelled(import_id):
-                    logger.info("[GRN] Waiting 30 s before next document (%d/%d)…", idx + 1, len(note_items))
+                if idx < len(store_items) - 1 and not _is_cancelled(import_id):
+                    logger.info("[GRN] Waiting 30 s before next document (%d/%d)…", idx + 1, len(store_items))
                     await asyncio.sleep(30)
     finally:
         _active_import_id = None
@@ -1210,17 +1069,9 @@ async def retry_grn_doc(doc_id: str) -> dict:
         "password":     (await get_setting("oracle_password"))     or "",
     }
 
-    # Duplicate check before retry — prevents re-posting an already-finalised note.
-    already = await _batch_check_processed_notes([doc.note or ""], oc)
-    if (doc.note or "") in already:
-        raise ValueError(
-            f"Note '{doc.note}' is already finalised in RetailPro (status=4). "
-            "Retry blocked to prevent duplicate GRN."
-        )
-
     async with httpx.AsyncClient(timeout=120) as http:
-        results = await _process_note_group(
-            note=doc.note or "",
+        results = await _process_store_group(
+            store_code=doc.store_code or "",
             rows=doc.raw_rows,
             source_file=doc.source_file or "retry",
             base_url=base_url,
