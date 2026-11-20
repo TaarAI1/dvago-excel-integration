@@ -4,7 +4,7 @@ Quantity Adjustment import service.
 Processing pipeline:
   1. Parse CSV — extract Store Code, scanupc, adjquantity columns
   2. Skip blank rows (no scanupc)
-  3. Group rows by Store Code
+  3. Group rows by STORE_CODE — each unique store code = one adjustment document
   4. For each store:
      a. Resolve store SID from Oracle:  SELECT sid FROM rps.store WHERE store_Code = ?
      b. Resolve sbs SID from Oracle:    SELECT sid FROM rps.subsidairy WHERE sbs_no = 1
@@ -415,33 +415,6 @@ async def _finalize_adjustment(
     return payload, resp_json, resp.status_code
 
 
-async def _post_qty_adj_comment(
-    http: httpx.AsyncClient,
-    base_url: str,
-    auth_session: str,
-    adj_sid: str,
-    note: str,
-) -> tuple[dict, dict]:
-    """POST /api/backoffice/adjustment/{adj_sid}/adjcomment with note as comment."""
-    payload = {
-        "data": [{
-            "originapplication": "RProPrismWeb",
-            "adjsid": adj_sid,
-            "comments": note,
-        }]
-    }
-    resp = await http.post(
-        f"{base_url}/api/backoffice/adjustment/{adj_sid}/adjcomment",
-        params={"comments": note},
-        json=payload,
-        headers=_rp_headers(auth_session),
-    )
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {"raw": resp.text}
-    return payload, resp_json
-
 
 # ── DB persistence ────────────────────────────────────────────────────────────
 
@@ -510,22 +483,10 @@ async def _persist_adj_doc(doc_data: dict) -> None:
 
 # ── Already-processed guard (Oracle) ─────────────────────────────────────────
 
-async def _is_qty_note_processed_in_oracle(note: str, oc: dict) -> bool:
-    """Return True if Oracle has a finalized qty adjustment (adj_type=0) with this note."""
-    result = await _oracle_scalar(
-        f"SELECT a.sid FROM rps.adjustment a "
-        f"JOIN rps.adj_comment ac ON a.sid = ac.adj_sid "
-        f"WHERE a.status = 4 "
-        f"AND ac.comments = '{note}' "
-        f"AND a.adj_type = 0",
-        oc,
-    )
-    return result is not None
 
 
-
-async def _process_note_batch(
-    note: str,
+async def _process_store_batch(
+    store_code: str,
     rows: list[dict],
     source_file: str,
     base_url: str,
@@ -539,8 +500,7 @@ async def _process_note_batch(
     adj_reason_sid: Optional[str] = None,
     existing_doc_id=None,
 ) -> dict:
-    """Process all rows for a single NOTE as one adjustment document."""
-    store_code = str(rows[0].get("STORE_CODE", "")).strip() or "1"
+    """Process all rows for a single STORE_CODE as one adjustment document."""
     store_name = str(rows[0].get("STORE_NAME", "")).strip()
 
     store_sid = await _get_store_sid(store_code, store_sid_cache, oc)
@@ -550,7 +510,6 @@ async def _process_note_batch(
         "source_file": source_file,
         "store_code": store_code,
         "store_name": store_name,
-        "note": note,
         "store_sid": store_sid,
         "sbs_sid": sbs_sid,
         "adj_sid": None,
@@ -563,18 +522,6 @@ async def _process_note_batch(
         "raw_rows": rows,
         "_existing_id": existing_doc_id,
     }
-
-    # Guard: skip notes already finalized in RetailPro Oracle (bypassed on retry)
-    if note and not existing_doc_id:
-        try:
-            if await _is_qty_note_processed_in_oracle(note, oc):
-                logger.info("[QtyAdj] Note '%s' already processed in RetailPro — skipping", note)
-                doc_data["error_message"] = f"{note} already processed in RetailPro"
-                doc_data["error_count"] = len(rows)
-                await _persist_adj_doc(doc_data)
-                return doc_data
-        except Exception as guard_exc:
-            logger.warning("[QtyAdj] Could not check duplicate note '%s' in Oracle: %s", note, guard_exc)
 
     if not store_sid:
         logger.warning("No store SID found for store_code=%s — skipping %d rows", store_code, len(rows))
@@ -637,26 +584,6 @@ async def _process_note_batch(
         )
         await _persist_adj_doc(doc_data)
         return doc_data
-
-    # Fresh duplicate guard — last-resort check right before any RetailPro API call.
-    # Catches race conditions where two simultaneous imports both passed the initial check.
-    if note:
-        try:
-            if await _is_qty_note_processed(note):
-                logger.warning(
-                    "[QtyAdj] Fresh duplicate check blocked posting for note='%s'.", note
-                )
-                doc_data["error_count"]   = len(rows)
-                doc_data["error_message"] = (
-                    f"Note '{note}' already exists in local database (posted/partial) at the "
-                    "point of posting — skipping to prevent duplicate qty adjustment."
-                )
-                await _persist_adj_doc(doc_data)
-                return doc_data
-        except Exception as _guard_exc:
-            logger.warning(
-                "[QtyAdj] Fresh duplicate guard check failed for note '%s': %s", note, _guard_exc
-            )
 
     try:
         # ── Step 1: Create adjustment document ───────────────────────────────
@@ -754,8 +681,8 @@ async def _process_note_batch(
                             + (f": {_i_err_detail}" if _i_err_detail else "")
                         )
                         logger.warning(
-                            "[QtyAdj] POST adjitem failed note='%s' adj_sid=%s upc=%s HTTP %d",
-                            note, adj_sid, item.get("upc"), i_status,
+                            "[QtyAdj] POST adjitem failed store=%s adj_sid=%s upc=%s HTTP %d",
+                            store_code, adj_sid, item.get("upc"), i_status,
                         )
                     else:
                         items_detail[idx]["ok"] = True
@@ -773,16 +700,16 @@ async def _process_note_batch(
                     else:
                         items_detail[idx]["error"] = f"Network error (after retry): {net_exc}"
                         logger.warning(
-                            "[QtyAdj] POST adjitem failed after retry note='%s' upc=%s: %s",
-                            note, item.get("upc"), net_exc,
+                            "[QtyAdj] POST adjitem failed after retry store=%s upc=%s: %s",
+                            store_code, item.get("upc"), net_exc,
                         )
 
                 except Exception as item_exc:
                     items_detail[idx]["error"] = f"Unexpected error posting item: {item_exc}"
-                    logger.warning(
-                        "[QtyAdj] POST adjitem unexpected exception note='%s' upc=%s: %s",
-                        note, item.get("upc"), item_exc,
-                    )
+                        logger.warning(
+                            "[QtyAdj] POST adjitem unexpected exception store=%s upc=%s: %s",
+                            store_code, item.get("upc"), item_exc,
+                        )
                     break  # non-network errors are not retried
 
             # 2-second pause between items to avoid overwhelming RetailPro
@@ -827,13 +754,13 @@ async def _process_note_batch(
             )
             doc_data["error_count"] = len(rows)
             logger.warning(
-                "[QtyAdj] Finalize PUT failed note='%s' adj_sid=%s HTTP %d",
-                note, adj_sid, fin_status,
+                "[QtyAdj] Finalize PUT failed store=%s adj_sid=%s HTTP %d",
+                store_code, adj_sid, fin_status,
             )
             await _persist_adj_doc(doc_data)
             return doc_data
 
-        logger.info("[QtyAdj] Finalize PUT succeeded note='%s' adj_sid=%s HTTP %d", note, adj_sid, fin_status)
+        logger.info("[QtyAdj] Finalize PUT succeeded store=%s adj_sid=%s HTTP %d", store_code, adj_sid, fin_status)
 
         posted = sum(1 for it in doc_data["items_data"] if it.get("ok"))
         errors = len(doc_data["items_data"]) - posted
@@ -844,34 +771,19 @@ async def _process_note_batch(
             "status": "posted" if errors == 0 else ("partial" if posted > 0 else "error"),
         })
 
-        # ── Step 6: Post comment ──────────────────────────────────────────────
-        if note:
-            try:
-                comment_payload, comment_resp = await _post_qty_adj_comment(
-                    http, base_url, auth_session, adj_sid, note
-                )
-                doc_data["api_comment_payload"] = comment_payload
-                doc_data["api_comment_response"] = comment_resp
-                logger.info("[QtyAdj] Comment posted for adj_sid=%s", adj_sid)
-            except Exception as comment_exc:
-                logger.warning(
-                    "[QtyAdj] Comment post failed for adj_sid=%s: %s", adj_sid, comment_exc
-                )
-                doc_data["api_comment_response"] = {"error": str(comment_exc)}
-
     except Exception as exc:
-        logger.exception("Error processing qty adj note='%s' store=%s", note, store_code)
+        logger.exception("Error processing qty adj store=%s", store_code)
         doc_data["error_message"] = str(exc)
         doc_data["error_count"] = len(rows)
 
     try:
         await _persist_adj_doc(doc_data)
     except Exception as db_exc:
-        logger.error("[QtyAdj] Failed to persist adj doc for note='%s' store=%s: %s", note, store_code, db_exc)
+        logger.error("[QtyAdj] Failed to persist adj doc for store=%s: %s", store_code, db_exc)
 
     logger.info(
-        "[QtyAdj] Note='%s' Store=%s adj_sid=%s items=%d posted=%d errors=%d",
-        note, store_code, doc_data.get("adj_sid"),
+        "[QtyAdj] Store=%s adj_sid=%s items=%d posted=%d errors=%d",
+        store_code, doc_data.get("adj_sid"),
         doc_data["item_count"], doc_data["posted_count"], doc_data["error_count"],
     )
     return doc_data
@@ -884,7 +796,7 @@ async def process_qty_adjustment_csv(
     source_file: str = "qty_adjustment.csv",
 ) -> dict:
     """
-    Full pipeline: parse CSV → group by NOTE → one adjustment document per NOTE.
+    Full pipeline: parse CSV → group by STORE_CODE → one adjustment document per store.
     Supports cooperative cancellation via request_cancel_import().
     Returns a summary dict.
     """
@@ -932,11 +844,11 @@ async def process_qty_adjustment_csv(
         auth_session = await get_auth_session()
         await sit_session(base_url, auth_session)
 
-        # Group rows by NOTE — each unique note = one adjustment document
-        note_groups: dict[str, list[dict]] = {}
+        # Group rows by STORE_CODE — each unique store code = one adjustment document
+        store_groups: dict[str, list[dict]] = {}
         for row in rows:
-            n = str(row.get("NOTE", "") or "").strip()
-            note_groups.setdefault(n, []).append(row)
+            sc = str(row.get("STORE_CODE", "") or "").strip().upper()
+            store_groups.setdefault(sc, []).append(row)
 
         store_sid_cache: dict = {}
         sbs_sid_cache: dict = {}
@@ -951,8 +863,8 @@ async def process_qty_adjustment_csv(
         from app.services.item_master_service import _normalize_upc as _nu
         all_upcs = list({
             _nu(row.get("SCANUPC", ""))
-            for note_rows in note_groups.values()
-            for row in note_rows
+            for store_rows in store_groups.values()
+            for row in store_rows
             if _nu(row.get("SCANUPC", ""))
         })
         if all_upcs:
@@ -961,17 +873,17 @@ async def process_qty_adjustment_csv(
 
         _timeout = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=30.0)
         async with httpx.AsyncClient(timeout=_timeout, verify=False, follow_redirects=True) as http:
-            for note, note_rows in note_groups.items():
+            for store_code, store_rows in store_groups.items():
                 if _is_import_cancelled(import_id):
                     logger.info(
-                        "QTY adjustment import %s cancelled — stopped after %d notes",
+                        "QTY adjustment import %s cancelled — stopped after %d stores",
                         import_id, len(all_docs),
                     )
                     cancelled = True
                     break
-                doc = await _process_note_batch(
-                    note=note,
-                    rows=note_rows,
+                doc = await _process_store_batch(
+                    store_code=store_code,
+                    rows=store_rows,
                     source_file=source_file,
                     base_url=base_url,
                     auth_session=auth_session,
@@ -1063,8 +975,8 @@ async def retry_qty_adj_doc(doc_id: str) -> dict:
     adj_reason_sid = (await get_setting("adj_reason_sid")) or None
 
     async with httpx.AsyncClient(timeout=120) as http:
-        result = await _process_note_batch(
-            note=doc.note or "",
+        result = await _process_store_batch(
+            store_code=doc.store_code or "",
             rows=doc.raw_rows,
             source_file=doc.source_file or "retry",
             base_url=base_url,
